@@ -1,11 +1,13 @@
 import { createContext, useContext, useReducer, useCallback, useEffect } from 'react'
 
 // ─── 초기 팀원 데이터 ─────────────────────────────────────────────────────────
+// 기본값은 비워둔다. 실제 팀원 목록은 구글 캘린더의 설정 이벤트(__APP_CONFIG__)에서
+// 로드되며, 모든 사용자가 동일한 값을 공유한다.
 const DEFAULT_MEMBERS = {
-  A: ['미배정', '김대리', '이주임', '정사원'],
-  B: ['미배정', '박사원', '윤대리', '서주임'],
-  C: ['미배정', '최대리', '한과장', '오주임', '문대리'],
-  D: ['미배정', '윤대리', '강주임', '배사원'],
+  A: ['미배정'],
+  B: ['미배정'],
+  C: ['미배정'],
+  D: ['미배정'],
 }
 
 const TEAM_LABELS = {
@@ -18,10 +20,17 @@ const TEAM_LABELS = {
 // 샘플 데이터는 더 이상 시드하지 않음 (구글 캘린더가 단일 진실 공급원).
 // 빈 상태로 시작 → 첫 자동 가져오기 후 구글 캘린더의 일정만 표시됨.
 
-const STORAGE_KEY = 'cs_schedule_state_v3'
+// v4: 옛 샘플 일정(googleEventId 없는 잔재) 자동 정리 로직 도입.
+// 이전 키(v3)에 남아있던 데이터는 무시하고 새로 시작한다.
+const STORAGE_KEY = 'cs_schedule_state_v4'
+const LEGACY_KEYS = ['cs_schedule_state_v1', 'cs_schedule_state_v2', 'cs_schedule_state_v3']
 
 function loadFromStorage() {
   try {
+    // 구버전 키 정리 — 옛 샘플 데이터가 들어있을 수 있음
+    LEGACY_KEYS.forEach(k => {
+      try { localStorage.removeItem(k) } catch {}
+    })
     const raw = localStorage.getItem(STORAGE_KEY)
     if (!raw) return null
     return JSON.parse(raw)
@@ -30,7 +39,14 @@ function loadFromStorage() {
 
 function buildInitialState() {
   const saved = loadFromStorage()
-  if (saved) return saved
+  if (saved) {
+    // 안전장치: 저장본에 멤버가 없거나 깨졌으면 기본값으로 보강
+    return {
+      ...saved,
+      members: saved.members && Object.keys(saved.members).length > 0 ? saved.members : DEFAULT_MEMBERS,
+      teamLabels: saved.teamLabels || TEAM_LABELS,
+    }
+  }
   return {
     schedules: [],
     members: DEFAULT_MEMBERS,
@@ -39,6 +55,8 @@ function buildInitialState() {
     googleConnected: false,
     syncLogs: [],
     nextId: 1,
+    lastSyncAt: null,
+    configLoadedAt: null,
   }
 }
 
@@ -156,9 +174,10 @@ function reducer(state, action) {
         return newItem
       })
 
-      // 앱에서 직접 추가한 일정 (googleEventId 없는 것) → 그대로 유지
-      // 단 localDirty=false이고 googleEventId 없는 항목은 export 실패 잔여물일 수 있어 그대로 보존
-      const localOnly = state.schedules.filter(s => !s.googleEventId)
+      // 앱에서 방금 추가했지만 아직 구글에 반영 안 된 일정만 보존.
+      // (googleEventId 없고 localDirty=true인 것)
+      // 그 외 "googleEventId 없고 localDirty도 아닌" 일정은 옛 샘플/잔재 데이터이므로 정리.
+      const localOnly = state.schedules.filter(s => !s.googleEventId && s.localDirty === true)
 
       // 구글에서 삭제된 일정은 앱에서도 제거.
       // 단 localDirty=true(아직 미반영)는 보호 — incoming에 없어도 살려둠.
@@ -182,6 +201,35 @@ function reducer(state, action) {
         ...state,
         schedules: deduped,
         nextId: Math.max(0, state.nextId, ...allNumericIds) + 1,
+        lastSyncAt: Date.now(),
+      }
+    }
+
+    case 'APPLY_REMOTE_CONFIG': {
+      // 구글 캘린더의 설정 이벤트에서 멤버/팀라벨을 끌어와 적용.
+      // 모든 사용자가 동일한 값을 공유하기 위함.
+      const { members, teamLabels } = action.payload || {}
+      const next = { ...state, configLoadedAt: Date.now() }
+      if (members && typeof members === 'object') {
+        // 미배정은 항상 첫 번째 자리에 보장
+        const normalized = {}
+        for (const t of ['A', 'B', 'C', 'D']) {
+          const list = Array.isArray(members[t]) ? members[t] : []
+          const filtered = list.filter(n => n && n !== '미배정')
+          normalized[t] = ['미배정', ...filtered]
+        }
+        next.members = normalized
+      }
+      if (teamLabels && typeof teamLabels === 'object') {
+        next.teamLabels = { ...state.teamLabels, ...teamLabels }
+      }
+      return next
+    }
+
+    case 'SET_TEAM_LABEL': {
+      return {
+        ...state,
+        teamLabels: { ...state.teamLabels, [action.team]: action.label },
       }
     }
 
@@ -215,6 +263,8 @@ export function StoreProvider({ children }) {
     postponeSchedule: useCallback((id, date) => dispatch({ type: 'POSTPONE_SCHEDULE', id, date }), []),
     addMember: useCallback((team, name) => dispatch({ type: 'ADD_MEMBER', team, name }), []),
     removeMember: useCallback((team, name) => dispatch({ type: 'REMOVE_MEMBER', team, name }), []),
+    setTeamLabel: useCallback((team, label) => dispatch({ type: 'SET_TEAM_LABEL', team, label }), []),
+    applyRemoteConfig: useCallback((payload) => dispatch({ type: 'APPLY_REMOTE_CONFIG', payload }), []),
     setGoogleCalendarId: useCallback((id) => dispatch({ type: 'SET_GOOGLE_CALENDAR_ID', id }), []),
     setGoogleConnected: useCallback((connected) => dispatch({ type: 'SET_GOOGLE_CONNECTED', connected }), []),
     importFromGoogle: useCallback((events) => dispatch({ type: 'IMPORT_FROM_GOOGLE', events }), []),
