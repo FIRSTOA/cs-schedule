@@ -235,6 +235,9 @@ export default function SyncPage() {
             <div className="text-xs text-slate-400 text-right">
               <p>10개 캘린더</p>
               <p className="text-slate-300 mt-0.5">서비스 계정</p>
+              <p className="text-slate-300 mt-0.5 tabular-nums">
+                v {import.meta.env.VITE_BUILD_TIME?.slice(5, 16).replace('T', ' ') || 'dev'}
+              </p>
             </div>
           </div>
 
