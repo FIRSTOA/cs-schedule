@@ -90,6 +90,35 @@ export default async function handler(req, res) {
     const defaultCalId = getDefaultCalendarId()
     const { action } = req.query
 
+    // ── 디버그: 서비스 계정이 접근 가능한 캘린더 전체 목록 ────────────────────
+    // 응답: { calendars: [{ id, summary, accessRole }, ...] }
+    // 코드의 DEFAULT_CALENDARS와 비교해 어떤 캘린더가 실제 공유돼 있는지 확인용.
+    if (req.method === 'GET' && action === 'debug-list') {
+      const all = []
+      let pageToken = undefined
+      do {
+        const resp = await calendar.calendarList.list({
+          maxResults: 250,
+          showHidden: true,
+          ...(pageToken ? { pageToken } : {}),
+        })
+        for (const item of resp.data.items || []) {
+          all.push({
+            id: item.id,
+            summary: item.summary,
+            accessRole: item.accessRole,
+            primary: item.primary || false,
+          })
+        }
+        pageToken = resp.data.nextPageToken
+      } while (pageToken)
+      return res.status(200).json({
+        serviceAccountEmail: (await auth.getCredentials()).client_email,
+        count: all.length,
+        calendars: all,
+      })
+    }
+
     // ── 멀티 캘린더 일정 가져오기 ─────────────────────────────────────────────
     // calendarIds=id1,id2,id3 → 병렬 fetch. 미지정 시 기본 캘린더만.
     if (req.method === 'GET' && action === 'list') {
