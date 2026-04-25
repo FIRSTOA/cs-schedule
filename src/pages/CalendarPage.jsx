@@ -236,7 +236,11 @@ export default function CalendarPage() {
               </motion.div>
             ) : (
               <div className="space-y-2">
-                {selectedSchedules.map(item => (
+                {selectedSchedules.map(item => {
+                  const cleanTitle = item.member && item.member !== '미배정' && item.title?.startsWith(`${item.member} / `)
+                    ? item.title.slice(item.member.length + 3)
+                    : item.title
+                  return (
                   <motion.button
                     key={item.id}
                     layout
@@ -250,7 +254,10 @@ export default function CalendarPage() {
                       <div className="flex items-center gap-2">
                         <span className="text-xs text-slate-400 tabular-nums shrink-0">{item.start}</span>
                         <span className={`text-sm font-medium truncate ${STATUS_STYLES[item.status]}`}>
-                          {item.title}
+                          {item.member && item.member !== '미배정' && (
+                            <span className="text-blue-700 mr-1">{item.member}</span>
+                          )}
+                          {cleanTitle}
                         </span>
                       </div>
                       {item.location && (
@@ -268,7 +275,8 @@ export default function CalendarPage() {
                       {item.team}팀
                     </span>
                   </motion.button>
-                ))}
+                  )
+                })}
               </div>
             )}
           </AnimatePresence>
