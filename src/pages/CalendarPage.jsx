@@ -6,6 +6,7 @@ import 'dayjs/locale/ko'
 dayjs.locale('ko')
 
 import { useStore } from '@/store/useStore.jsx'
+import { deleteEvent } from '@/lib/calendarApi'
 import BottomSheet from '@/components/BottomSheet'
 import ScheduleForm from '@/components/ScheduleForm'
 import PostponeSheet from '@/components/PostponeSheet'
@@ -95,10 +96,25 @@ export default function CalendarPage() {
     setEditItem(null)
   }
 
-  const handleDelete = (id) => {
-    actions.deleteSchedule(id)
+  const handleDelete = async (id) => {
     setIsFormOpen(false)
     setEditItem(null)
+    const item = state.schedules.find(s => s.id === id)
+    // 구글에 있는 이벤트면 거기부터 지움 — 안 그러면 다음 import에 부활.
+    if (item?.googleEventId) {
+      try {
+        await deleteEvent(item.googleEventId, item.calendarId)
+      } catch (e) {
+        actions.addSyncLog({
+          time: dayjs().format('HH:mm'),
+          type: 'export',
+          msg: `삭제 실패: ${item.title || ''} - ${e.message}`,
+          ok: false,
+        })
+        return
+      }
+    }
+    actions.deleteSchedule(id)
   }
 
   return (

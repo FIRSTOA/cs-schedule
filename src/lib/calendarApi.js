@@ -158,6 +158,8 @@ export function googleEventToSchedule(event, options = {}) {
 
   // 제목 파싱: "담당자 / 업무내용" 형식 (앞의 상태 태그 제거)
   const rawTitleFull = event.summary || '새 일정'
+  const titleStatusMatch = rawTitleFull.match(/^\[(완료|특이|진행중|예정)\]/)
+  const statusFromTitle = titleStatusMatch ? titleStatusMatch[1] : null
   const rawTitle = rawTitleFull.replace(/^\[(완료|특이|진행중|예정)\]\s*/, '')
   let member = '미배정'
   let cleanTitle = rawTitle
@@ -180,9 +182,10 @@ export function googleEventToSchedule(event, options = {}) {
     member = memberMatch[1].trim()
   }
 
-  // 상태, 메모, 연락처 파싱
+  // 상태 파싱 — 제목 접두사([완료]/[특이]/[진행중]/[예정])가 우선,
+  // 없으면 description의 "상태:" 라인, 그것도 없으면 기본 '예정'.
   const statusMatch = desc.match(/상태:\s*(\S+)/)
-  const status = statusMatch ? statusMatch[1] : '예정'
+  const status = statusFromTitle || (statusMatch ? statusMatch[1] : '예정')
   const phoneMatch = desc.match(/연락처:\s*(.+?)(?:\n|$)/)
   const phone = phoneMatch ? phoneMatch[1].trim() : ''
 
