@@ -17,13 +17,71 @@ const TEAM_LABELS = {
   D: '오후 6시',
 }
 
+// ─── 캘린더 등록부 ────────────────────────────────────────────────────────────
+// 각 캘린더의 역할(role):
+//   pool      = 접수 풀 (익일통합). 읽기+쓰기.
+//   teamAS    = 팀별 활성 A/S. 읽기+쓰기.
+//   ops       = 운영 일정(납품/교체/철수/휴가/교육). 읽기+쓰기.
+//   teamReport= 팀별 점검/마감. 쓰기 전용 (앱 표시 X, 수정 X, 등록만).
+//
+// `__APP_CONFIG__`로 덮어쓸 수 있어 모든 사용자가 동일 등록부 공유.
+const DEFAULT_CALENDARS = {
+  pool: {
+    id: 'a7924882c9ac2aadef43993e50bcc9e0e7ccf2207060f30ace721948db395172@group.calendar.google.com',
+    label: '익일통합 AS',
+    role: 'pool',
+  },
+  teamAS: {
+    A: { id: 'c_8aa74b64ef7adfca6673f6af40acb17f4cca1914d3d7256dffbd4eaf55037f5f@group.calendar.google.com', label: '수도권A [A/S]' },
+    B: { id: 'c_907853563d1f6097187d2dd68d724e634c8d7dbce5fe50d725389ed6e372c7f9@group.calendar.google.com', label: '수도권B [A/S]' },
+    C: { id: 'c_f81300f2e58e2de57b7a15f39d9172bc044a380da808a409edba54ed0940f547@group.calendar.google.com', label: '수도권C [A/S]' },
+    D: { id: 'c_2791d53a40733df2a516d83e3a438f74bb55d7f3b21893704d0107d4af87af6e@group.calendar.google.com', label: '수도권D [A/S]' },
+  },
+  teamReport: {
+    A: { id: 'c_78010dbbec1c266294a9e4b2c14403b3c7b2e97e59675c4cf896da3ea8e61b56@group.calendar.google.com', label: '수도권A [점검/마감]' },
+    B: { id: 'c_740f19828c1e5249a7c5057a33baffae0e14b380c5619bdf1aca95c3de788ad5@group.calendar.google.com', label: '수도권B [점검/마감]' },
+    C: { id: 'c_636ab0bf185ccc06bd61ec674c9de61bc7bd1f2ac76df2bbb007605201d87e8d@group.calendar.google.com', label: '수도권C [점검/마감]' },
+    D: { id: 'c_e66271822496946e63bbe9d2fe2a24552bc35d96e335060a0ff8a74ab7ed96d0@group.calendar.google.com', label: '수도권D [점검/마감]' },
+  },
+  ops: {
+    id: '3be77765f4952c3c929154ec7c7fa0b021eeedcec0c9ac1631fa4ab83c3e6453@group.calendar.google.com',
+    label: '납품/교체/철수/휴가/교육',
+    role: 'ops',
+  },
+}
+
+// 가져올(read) 캘린더 키 목록 → IMPORT 대상.
+// 점검/마감(teamReport)도 포함 — CRUD 가능하지만 메인 화면에선 별도 탭으로 분리 표시.
+export function getReadCalendarKeys() {
+  return [
+    'pool',
+    'teamAS:A', 'teamAS:B', 'teamAS:C', 'teamAS:D',
+    'teamReport:A', 'teamReport:B', 'teamReport:C', 'teamReport:D',
+    'ops',
+  ]
+}
+
+// 캘린더 키 → 실제 ID/label/role 해석
+export function resolveCalendar(calendars, calKey) {
+  if (!calKey || !calendars) return null
+  if (calKey.includes(':')) {
+    const [group, sub] = calKey.split(':')
+    const entry = calendars[group]?.[sub]
+    if (!entry) return null
+    return { id: entry.id, label: entry.label, role: group, team: sub }
+  }
+  const entry = calendars[calKey]
+  if (!entry) return null
+  return { id: entry.id, label: entry.label, role: calKey }
+}
+
 // 샘플 데이터는 더 이상 시드하지 않음 (구글 캘린더가 단일 진실 공급원).
 // 빈 상태로 시작 → 첫 자동 가져오기 후 구글 캘린더의 일정만 표시됨.
 
-// v4: 옛 샘플 일정(googleEventId 없는 잔재) 자동 정리 로직 도입.
-// 이전 키(v3)에 남아있던 데이터는 무시하고 새로 시작한다.
-const STORAGE_KEY = 'cs_schedule_state_v4'
-const LEGACY_KEYS = ['cs_schedule_state_v1', 'cs_schedule_state_v2', 'cs_schedule_state_v3']
+// v5: 멀티 캘린더 도입 — 일정에 calendarKey/calendarId 필드 추가.
+// 이전 키들은 단일 캘린더 시절 데이터라 무시하고 새로 시작.
+const STORAGE_KEY = 'cs_schedule_state_v5'
+const LEGACY_KEYS = ['cs_schedule_state_v1', 'cs_schedule_state_v2', 'cs_schedule_state_v3', 'cs_schedule_state_v4']
 
 function loadFromStorage() {
   try {
@@ -40,17 +98,18 @@ function loadFromStorage() {
 function buildInitialState() {
   const saved = loadFromStorage()
   if (saved) {
-    // 안전장치: 저장본에 멤버가 없거나 깨졌으면 기본값으로 보강
     return {
       ...saved,
       members: saved.members && Object.keys(saved.members).length > 0 ? saved.members : DEFAULT_MEMBERS,
       teamLabels: saved.teamLabels || TEAM_LABELS,
+      calendars: saved.calendars && Object.keys(saved.calendars).length > 0 ? saved.calendars : DEFAULT_CALENDARS,
     }
   }
   return {
     schedules: [],
     members: DEFAULT_MEMBERS,
     teamLabels: TEAM_LABELS,
+    calendars: DEFAULT_CALENDARS,
     googleCalendarId: '',
     googleConnected: false,
     syncLogs: [],
@@ -206,9 +265,9 @@ function reducer(state, action) {
     }
 
     case 'APPLY_REMOTE_CONFIG': {
-      // 구글 캘린더의 설정 이벤트에서 멤버/팀라벨을 끌어와 적용.
+      // 구글 캘린더의 설정 이벤트에서 멤버/팀라벨/캘린더 등록부를 끌어와 적용.
       // 모든 사용자가 동일한 값을 공유하기 위함.
-      const { members, teamLabels } = action.payload || {}
+      const { members, teamLabels, calendars } = action.payload || {}
       const next = { ...state, configLoadedAt: Date.now() }
       if (members && typeof members === 'object') {
         // 미배정은 항상 첫 번째 자리에 보장
@@ -223,7 +282,26 @@ function reducer(state, action) {
       if (teamLabels && typeof teamLabels === 'object') {
         next.teamLabels = { ...state.teamLabels, ...teamLabels }
       }
+      if (calendars && typeof calendars === 'object') {
+        next.calendars = calendars
+      }
       return next
+    }
+
+    case 'SET_CALENDAR_ENTRY': {
+      // calKey: 'pool' | 'ops' | 'teamAS:A' | 'teamReport:B' ...
+      const { calKey, id, label } = action
+      const cals = { ...state.calendars }
+      if (calKey.includes(':')) {
+        const [group, sub] = calKey.split(':')
+        cals[group] = {
+          ...(cals[group] || {}),
+          [sub]: { ...(cals[group]?.[sub] || {}), id: id ?? cals[group]?.[sub]?.id, label: label ?? cals[group]?.[sub]?.label },
+        }
+      } else {
+        cals[calKey] = { ...(cals[calKey] || {}), id: id ?? cals[calKey]?.id, label: label ?? cals[calKey]?.label }
+      }
+      return { ...state, calendars: cals }
     }
 
     case 'SET_TEAM_LABEL': {
@@ -264,6 +342,7 @@ export function StoreProvider({ children }) {
     addMember: useCallback((team, name) => dispatch({ type: 'ADD_MEMBER', team, name }), []),
     removeMember: useCallback((team, name) => dispatch({ type: 'REMOVE_MEMBER', team, name }), []),
     setTeamLabel: useCallback((team, label) => dispatch({ type: 'SET_TEAM_LABEL', team, label }), []),
+    setCalendarEntry: useCallback((calKey, id, label) => dispatch({ type: 'SET_CALENDAR_ENTRY', calKey, id, label }), []),
     applyRemoteConfig: useCallback((payload) => dispatch({ type: 'APPLY_REMOTE_CONFIG', payload }), []),
     setGoogleCalendarId: useCallback((id) => dispatch({ type: 'SET_GOOGLE_CALENDAR_ID', id }), []),
     setGoogleConnected: useCallback((connected) => dispatch({ type: 'SET_GOOGLE_CONNECTED', connected }), []),

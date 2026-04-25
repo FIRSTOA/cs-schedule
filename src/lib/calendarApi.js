@@ -5,20 +5,28 @@
 
 const BASE = '/api/calendar'
 
-// ── 전체 일정 가져오기 ──────────────────────────────────────────────────────
-export async function fetchAllEvents() {
-  const res = await fetch(`${BASE}?action=list`)
+// ── 전체 일정 가져오기 (멀티 캘린더) ────────────────────────────────────────
+// calendarIds: 문자열 배열. 각 이벤트에는 _calendarId 메타가 붙어옴.
+// 일부 캘린더 fetch 실패해도 다른 건 진행 (errors 배열에 보고됨).
+export async function fetchAllEvents(calendarIds) {
+  const params = new URLSearchParams()
+  if (Array.isArray(calendarIds) && calendarIds.length > 0) {
+    params.set('calendarIds', calendarIds.join(','))
+  }
+  const res = await fetch(`${BASE}?action=list&${params.toString()}`)
   if (!res.ok) {
     const err = await res.json().catch(() => ({}))
     throw new Error(err.error || `HTTP ${res.status}`)
   }
   const data = await res.json()
-  return data.events || []
+  return { events: data.events || [], errors: data.errors || [] }
 }
 
 // ── 일정 생성 ──────────────────────────────────────────────────────────────
-export async function createEvent(eventBody) {
-  const res = await fetch(`${BASE}?action=create`, {
+export async function createEvent(eventBody, calendarId) {
+  const params = new URLSearchParams({ action: 'create' })
+  if (calendarId) params.set('calendarId', calendarId)
+  const res = await fetch(`${BASE}?${params.toString()}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(eventBody),
@@ -31,8 +39,10 @@ export async function createEvent(eventBody) {
 }
 
 // ── 일정 수정 ──────────────────────────────────────────────────────────────
-export async function updateEvent(eventId, eventBody) {
-  const res = await fetch(`${BASE}?action=update`, {
+export async function updateEvent(eventId, eventBody, calendarId) {
+  const params = new URLSearchParams({ action: 'update' })
+  if (calendarId) params.set('calendarId', calendarId)
+  const res = await fetch(`${BASE}?${params.toString()}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ eventId, ...eventBody }),
@@ -45,15 +55,30 @@ export async function updateEvent(eventId, eventBody) {
 }
 
 // ── 일정 삭제 ──────────────────────────────────────────────────────────────
-export async function deleteEvent(eventId) {
-  const res = await fetch(`${BASE}?action=delete&eventId=${encodeURIComponent(eventId)}`, {
-    method: 'DELETE',
-  })
+export async function deleteEvent(eventId, calendarId) {
+  const params = new URLSearchParams({ action: 'delete', eventId })
+  if (calendarId) params.set('calendarId', calendarId)
+  const res = await fetch(`${BASE}?${params.toString()}`, { method: 'DELETE' })
   if (!res.ok) {
     const err = await res.json().catch(() => ({}))
     throw new Error(err.error || `HTTP ${res.status}`)
   }
   return true
+}
+
+// ── 일정 이동 (출처 → 대상 캘린더) ──────────────────────────────────────────
+// 백엔드: 대상에 새로 만들고 출처에서 삭제. 새 googleEventId가 반환됨.
+export async function moveEvent({ fromCalendarId, toCalendarId, eventId, eventBody }) {
+  const res = await fetch(`${BASE}?action=move`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ fromCalendarId, toCalendarId, eventId, eventBody }),
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    throw new Error(err.error || `HTTP ${res.status}`)
+  }
+  return await res.json() // { event, deleted, deleteError }
 }
 
 // ── 앱 설정 가져오기 (모든 사용자 공유) ────────────────────────────────────

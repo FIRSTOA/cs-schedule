@@ -9,18 +9,17 @@ function getAuth() {
   })
 }
 
-function getCalendarId() {
+// 환경변수 기본 캘린더 (설정 이벤트 보관처).
+// 멀티 캘린더 도입 후에도 __APP_CONFIG__는 이 캘린더 한 곳에만 둠.
+function getDefaultCalendarId() {
   return process.env.VITE_GOOGLE_CALENDAR_ID || 'firstoa8@gmail.com'
 }
 
-// 앱 설정(팀원 등)을 저장하는 특수 이벤트의 식별 태그.
-// summary와 description 첫 줄에 박혀 있어 다른 이벤트와 구분됨.
+// 앱 설정(팀원/캘린더 등록부 등)을 저장하는 특수 이벤트의 식별 태그.
 const CONFIG_EVENT_TAG = '__APP_CONFIG__'
-// 설정 이벤트의 고정 날짜(아주 먼 과거 종일 이벤트로 1건만 유지)
 const CONFIG_EVENT_DATE = '2000-01-01'
 
 async function findConfigEvent(calendar, calendarId) {
-  // q 파라미터로 태그 텍스트 검색 → 가장 빠르고 안정적
   const res = await calendar.events.list({
     calendarId,
     q: CONFIG_EVENT_TAG,
@@ -34,7 +33,6 @@ async function findConfigEvent(calendar, calendarId) {
 
 function parseConfigDescription(desc) {
   if (!desc) return {}
-  // description은 "__APP_CONFIG__\n<JSON>" 형식
   const idx = desc.indexOf('{')
   if (idx === -1) return {}
   try {
@@ -55,6 +53,30 @@ function buildConfigEventBody(payload) {
   }
 }
 
+// 단일 캘린더 일정 페치 (페이지네이션 포함). 설정 이벤트는 자동 제외.
+async function fetchCalendarEvents(calendar, calId, timeMin, timeMax) {
+  let items = []
+  let pageToken = undefined
+  do {
+    const response = await calendar.events.list({
+      calendarId: calId,
+      timeMin,
+      timeMax,
+      maxResults: 2500,
+      singleEvents: true,
+      orderBy: 'startTime',
+      showDeleted: false,
+      ...(pageToken ? { pageToken } : {}),
+    })
+    items = items.concat(response.data.items || [])
+    pageToken = response.data.nextPageToken
+  } while (pageToken)
+  // 각 이벤트에 출처 calendarId 메타 부착
+  return items
+    .filter(ev => !(ev.summary || '').includes(CONFIG_EVENT_TAG))
+    .map(ev => ({ ...ev, _calendarId: calId }))
+}
+
 export default async function handler(req, res) {
   // CORS
   res.setHeader('Access-Control-Allow-Origin', '*')
@@ -65,12 +87,12 @@ export default async function handler(req, res) {
   try {
     const auth = getAuth()
     const calendar = google.calendar({ version: 'v3', auth })
-    const calendarId = getCalendarId()
+    const defaultCalId = getDefaultCalendarId()
     const { action } = req.query
 
-    // ── 전체 일정 가져오기 (페이지네이션 + 시간범위) ────────────────────────
+    // ── 멀티 캘린더 일정 가져오기 ─────────────────────────────────────────────
+    // calendarIds=id1,id2,id3 → 병렬 fetch. 미지정 시 기본 캘린더만.
     if (req.method === 'GET' && action === 'list') {
-      // 과거 6개월 ~ 미래 12개월. 필요시 query로 override 가능.
       const now = new Date()
       const defaultMin = new Date(now)
       defaultMin.setMonth(defaultMin.getMonth() - 6)
@@ -79,82 +101,115 @@ export default async function handler(req, res) {
       const timeMin = req.query.timeMin || defaultMin.toISOString()
       const timeMax = req.query.timeMax || defaultMax.toISOString()
 
-      let allItems = []
-      let pageToken = undefined
-      do {
-        const response = await calendar.events.list({
-          calendarId,
-          timeMin,
-          timeMax,
-          maxResults: 2500,
-          singleEvents: true,
-          orderBy: 'startTime',
-          showDeleted: false,
-          ...(pageToken ? { pageToken } : {}),
-        })
-        allItems = allItems.concat(response.data.items || [])
-        pageToken = response.data.nextPageToken
-      } while (pageToken)
-      // 설정 이벤트는 일반 일정 목록에서 제외
-      const filtered = allItems.filter(ev => !(ev.summary || '').includes(CONFIG_EVENT_TAG))
-      return res.status(200).json({ events: filtered })
+      const ids = (req.query.calendarIds || '')
+        .split(',')
+        .map(s => s.trim())
+        .filter(Boolean)
+      const targetIds = ids.length > 0 ? ids : [defaultCalId]
+
+      // 각 캘린더 병렬 fetch — 일부 실패해도 다른 건 진행
+      const results = await Promise.allSettled(
+        targetIds.map(cid => fetchCalendarEvents(calendar, cid, timeMin, timeMax))
+      )
+      const events = []
+      const errors = []
+      results.forEach((r, idx) => {
+        if (r.status === 'fulfilled') {
+          events.push(...r.value)
+        } else {
+          errors.push({ calendarId: targetIds[idx], error: r.reason?.message || String(r.reason) })
+        }
+      })
+      return res.status(200).json({ events, errors })
     }
 
-    // ── 앱 설정 가져오기 ──────────────────────────────────────────────────────
+    // ── 앱 설정 가져오기 (기본 캘린더 한 곳에서만) ────────────────────────────
     if (req.method === 'GET' && action === 'config') {
-      const ev = await findConfigEvent(calendar, calendarId)
+      const ev = await findConfigEvent(calendar, defaultCalId)
       if (!ev) return res.status(200).json({ config: null })
       return res.status(200).json({ config: parseConfigDescription(ev.description), eventId: ev.id })
     }
 
-    // ── 앱 설정 저장 (없으면 생성, 있으면 갱신) ─────────────────────────────
+    // ── 앱 설정 저장 ───────────────────────────────────────────────────────────
     if (req.method === 'PUT' && action === 'config') {
       const payload = req.body || {}
-      const ev = await findConfigEvent(calendar, calendarId)
+      const ev = await findConfigEvent(calendar, defaultCalId)
       const body = buildConfigEventBody(payload)
       if (ev) {
         const updated = await calendar.events.update({
-          calendarId,
+          calendarId: defaultCalId,
           eventId: ev.id,
           requestBody: body,
         })
         return res.status(200).json({ ok: true, eventId: updated.data.id })
       }
       const created = await calendar.events.insert({
-        calendarId,
+        calendarId: defaultCalId,
         requestBody: body,
       })
       return res.status(200).json({ ok: true, eventId: created.data.id })
     }
 
-    // ── 일정 생성 ──────────────────────────────────────────────────────────
+    // ── 일정 생성 (대상 캘린더 지정 가능) ─────────────────────────────────────
     if (req.method === 'POST' && action === 'create') {
-      const event = req.body
+      const { calendarId: bodyCalId, ...event } = req.body
+      const targetId = req.query.calendarId || bodyCalId || defaultCalId
       const response = await calendar.events.insert({
-        calendarId,
+        calendarId: targetId,
         requestBody: event,
       })
-      return res.status(200).json({ event: response.data })
+      return res.status(200).json({ event: { ...response.data, _calendarId: targetId } })
     }
 
-    // ── 일정 수정 ──────────────────────────────────────────────────────────
+    // ── 일정 수정 (대상 캘린더 지정 가능) ─────────────────────────────────────
     if (req.method === 'PUT' && action === 'update') {
-      const { eventId, ...event } = req.body
+      const { eventId, calendarId: bodyCalId, ...event } = req.body
+      const targetId = req.query.calendarId || bodyCalId || defaultCalId
       if (!eventId) return res.status(400).json({ error: 'eventId required' })
       const response = await calendar.events.update({
-        calendarId,
+        calendarId: targetId,
         eventId,
         requestBody: event,
       })
-      return res.status(200).json({ event: response.data })
+      return res.status(200).json({ event: { ...response.data, _calendarId: targetId } })
     }
 
-    // ── 일정 삭제 ──────────────────────────────────────────────────────────
+    // ── 일정 삭제 (대상 캘린더 지정 가능) ─────────────────────────────────────
     if (req.method === 'DELETE' && action === 'delete') {
-      const { eventId } = req.query
+      const { eventId, calendarId: queryCalId } = req.query
+      const targetId = queryCalId || defaultCalId
       if (!eventId) return res.status(400).json({ error: 'eventId required' })
-      await calendar.events.delete({ calendarId, eventId })
+      await calendar.events.delete({ calendarId: targetId, eventId })
       return res.status(200).json({ ok: true })
+    }
+
+    // ── 일정 이동 (출처 캘린더 → 대상 캘린더) ─────────────────────────────────
+    // body: { fromCalendarId, toCalendarId, eventId, eventBody }
+    // 동작: 대상 캘린더에 새로 생성 → 성공하면 출처에서 삭제. 부분 실패 시 롤백 없이 양쪽 상태 보고.
+    if (req.method === 'POST' && action === 'move') {
+      const { fromCalendarId, toCalendarId, eventId, eventBody } = req.body || {}
+      if (!fromCalendarId || !toCalendarId || !eventId || !eventBody) {
+        return res.status(400).json({ error: 'fromCalendarId, toCalendarId, eventId, eventBody required' })
+      }
+      // 1) 대상에 생성
+      const created = await calendar.events.insert({
+        calendarId: toCalendarId,
+        requestBody: eventBody,
+      })
+      // 2) 출처에서 삭제 (실패해도 created는 반환)
+      let deleted = true
+      let deleteError = null
+      try {
+        await calendar.events.delete({ calendarId: fromCalendarId, eventId })
+      } catch (e) {
+        deleted = false
+        deleteError = e.message
+      }
+      return res.status(200).json({
+        event: { ...created.data, _calendarId: toCalendarId },
+        deleted,
+        deleteError,
+      })
     }
 
     return res.status(404).json({ error: 'Unknown action' })
