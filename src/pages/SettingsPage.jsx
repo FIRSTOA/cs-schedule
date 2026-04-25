@@ -283,12 +283,12 @@ export default function SettingsPage() {
           <h2 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-3">구글 캘린더 연동</h2>
           <div className="bg-white rounded-2xl p-4 shadow-sm space-y-4">
 
-            {/* 현재 연결된 캘린더 */}
+            {/* 연결 상태 */}
             <div className="flex items-center justify-between py-1">
               <div>
-                <p className="text-xs font-semibold text-slate-500">현재 연결된 캘린더</p>
+                <p className="text-xs font-semibold text-slate-500">서비스 계정 연결 상태</p>
                 <p className="text-sm font-medium text-slate-900 mt-0.5">
-                  {state.googleCalendarId || 'firstoa8@gmail.com'}
+                  10개 캘린더 동기화
                 </p>
               </div>
               <span className={`text-xs px-2 py-1 rounded-full font-medium ${
@@ -300,6 +300,19 @@ export default function SettingsPage() {
               </span>
             </div>
 
+            {/* 앱 설정 저장 캘린더 (config 전용) */}
+            <div className="flex items-center justify-between py-1 border-t border-slate-100 pt-3">
+              <div className="flex-1 min-w-0">
+                <p className="text-xs font-semibold text-slate-500">앱 설정 저장 캘린더</p>
+                <p className="text-sm font-medium text-slate-900 mt-0.5 truncate">
+                  {state.googleCalendarId || 'firstoa8@gmail.com'}
+                </p>
+                <p className="text-[11px] text-slate-400 mt-0.5 leading-snug">
+                  팀원 목록·캘린더 등록부만 이 캘린더에 저장됩니다 (동기화 대상 X)
+                </p>
+              </div>
+            </div>
+
             {/* 캘린더 변경 안내 버튼 */}
             <button
               onClick={() => setShowGuide(o => !o)}
@@ -307,7 +320,7 @@ export default function SettingsPage() {
             >
               <div className="flex items-center gap-2">
                 <Info size={14} className="text-blue-500" />
-                <span className="text-sm font-semibold text-blue-700">다른 캘린더로 변경하는 방법</span>
+                <span className="text-sm font-semibold text-blue-700">앱 설정 저장 캘린더 변경 방법</span>
               </div>
               {showGuide
                 ? <ChevronUp size={14} className="text-blue-400" />
@@ -317,7 +330,10 @@ export default function SettingsPage() {
 
             {showGuide && (
               <div className="bg-blue-50 rounded-xl p-4 space-y-3 text-xs text-blue-800">
-                <p className="font-bold text-sm text-blue-900">캘린더 변경 방법 (2단계)</p>
+                <p className="font-bold text-sm text-blue-900">앱 설정 저장 캘린더 변경 (2단계)</p>
+                <p className="text-blue-700 text-[11px] leading-relaxed -mt-1">
+                  ※ 동기화 대상 캘린더 10개는 코드에 등록돼 있어 별개 — 여기는 설정 이벤트(__APP_CONFIG__) 저장처만 바꿉니다.
+                </p>
 
                 {/* 1단계 */}
                 <div className="space-y-1.5">

@@ -233,8 +233,8 @@ export default function SyncPage() {
               </div>
             </div>
             <div className="text-xs text-slate-400 text-right">
-              <p>{state.googleCalendarId || 'firstoa8@gmail.com'}</p>
-              <p className="text-slate-300 mt-0.5">자동 로그인</p>
+              <p>10개 캘린더</p>
+              <p className="text-slate-300 mt-0.5">서비스 계정</p>
             </div>
           </div>
 
