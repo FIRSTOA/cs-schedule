@@ -61,6 +61,10 @@ export default function ScheduleForm({ item, onSave, onDelete, onClose }) {
     // 기존 아이템이면 시간 유지, 신규면 팀 고정 시간
     start: item?.start || initTime.start,
     end: item?.end || initTime.end,
+    // 기존 캘린더 내용 보존 — 구버전 데이터는 originalDescription이 없을 수 있어 memo로 폴백.
+    originalDescription: item?.originalDescription ?? (item?.memo ?? ''),
+    // 메모칸은 "기존 내용 하단에 추가할 새 메모" 입력창. 항상 비워서 시작.
+    memo: '',
   })
 
   const [naviOpen, setNaviOpen] = useState(false)
@@ -248,14 +252,25 @@ export default function ScheduleForm({ item, onSave, onDelete, onClose }) {
         />
       </div>
 
-      {/* 메모 */}
+      {/* 기존 캘린더 내용 (읽기 전용) — 절대 수정/덮어쓰지 않음 */}
+      {form.originalDescription && (
+        <div>
+          <label className="block text-xs font-semibold text-slate-500 mb-1.5">기존 캘린더 내용</label>
+          <pre className="whitespace-pre-wrap break-words w-full px-3 py-2.5 bg-slate-100 border border-slate-200 rounded-xl text-sm text-slate-700 font-sans">{form.originalDescription}</pre>
+          <p className="mt-1 text-[11px] text-slate-400">※ 위 내용은 절대 수정되지 않습니다. 아래 메모칸에 입력한 내용이 맨 하단에 추가됩니다.</p>
+        </div>
+      )}
+
+      {/* 추가할 메모 — 저장 시 기존 내용 하단에 append됨 */}
       <div>
-        <label className="block text-xs font-semibold text-slate-500 mb-1.5">메모</label>
+        <label className="block text-xs font-semibold text-slate-500 mb-1.5">
+          {form.originalDescription ? '추가할 메모' : '메모'}
+        </label>
         <textarea
           value={form.memo}
           onChange={set('memo')}
           rows={3}
-          placeholder="특이사항, 참고 내용..."
+          placeholder={form.originalDescription ? '저장 시 기존 내용 하단에 추가됩니다' : '특이사항, 참고 내용...'}
           className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm text-slate-900 resize-none focus:outline-none focus:ring-2 focus:ring-slate-900/20"
         />
       </div>

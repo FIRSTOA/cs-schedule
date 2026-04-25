@@ -115,11 +115,13 @@ const TEAM_TIME = {
 }
 
 function detectTeamByTime(timeStr) {
-  const h = parseInt(timeStr.slice(0, 2), 10)
-  if (h >= 6  && h < 11) return 'A'
-  if (h >= 11 && h < 14) return 'B'
-  if (h >= 14 && h < 17) return 'C'
-  if (h >= 17 && h < 22) return 'D'
+  // 회사 룰: 9:00~9:30=A, 12:00~12:30=B, 15:00~15:30=C, 18:00~18:30=D
+  const [h, m] = timeStr.split(':').map(n => parseInt(n, 10))
+  const minutes = h * 60 + (m || 0)
+  if (minutes >= 9  * 60 && minutes <= 9  * 60 + 30) return 'A'
+  if (minutes >= 12 * 60 && minutes <= 12 * 60 + 30) return 'B'
+  if (minutes >= 15 * 60 && minutes <= 15 * 60 + 30) return 'C'
+  if (minutes >= 18 * 60 && minutes <= 18 * 60 + 30) return 'D'
   return 'A'
 }
 
@@ -148,17 +150,10 @@ export function googleEventToSchedule(event, options = {}) {
   // description 파싱
   const desc = event.description || ''
 
-  // 팀 결정 우선순위:
-  //   1) 캘린더 출처가 teamAS:X / teamReport:X → 그 X
-  //   2) description의 "팀: X팀"
-  //   3) 시간대 기반 추정 (단일 캘린더 시절 fallback)
-  let team = null
-  if (calMeta?.team) {
-    team = calMeta.team
-  } else {
-    const teamMatch = desc.match(/팀:\s*([ABCD])팀/)
-    team = teamMatch ? teamMatch[1] : detectTeamByTime(rawStart)
-  }
+  // 팀 결정 — 일정의 실제 시작 시간으로 분류.
+  //   A=오전(6~11시), B=정오(11~14시), C=오후(14~17시), D=저녁(17~22시)
+  //   캘린더 출처(teamAS:A 등)와 무관하게 시간 슬롯이 곧 팀.
+  const team = detectTeamByTime(rawStart)
   const fixedTime = TEAM_TIME[team] || TEAM_TIME['A']
 
   // 제목 파싱: "담당자 / 업무내용" 형식 (앞의 상태 태그 제거)
@@ -191,20 +186,9 @@ export function googleEventToSchedule(event, options = {}) {
   const phoneMatch = desc.match(/연락처:\s*(.+?)(?:\n|$)/)
   const phone = phoneMatch ? phoneMatch[1].trim() : ''
 
-  // 메모 파싱: "메모: xxx" 형식 우선
-  // 없으면 description에서 앱이 생성한 필드들(팀, 담당자, 상태, 연락처)을 제외한 나머지를 메모로 처리
-  let memo = ''
-  const memoMatch = desc.match(/메모:\s*(.+?)(?:\n|$)/)
-  if (memoMatch) {
-    memo = memoMatch[1].trim()
-  } else {
-    // 앱이 생성한 필드가 아닌 내용이 있으면 메모로 처리
-    const isAppGenerated = /팀:\s*[ABCD]팀/.test(desc) || /담당자:\s*/.test(desc) || /상태:\s*/.test(desc)
-    if (!isAppGenerated && desc.trim()) {
-      // 앱이 생성한 형식이 아닌 순수 구글 캘린더 메모
-      memo = desc.trim()
-    }
-  }
+  // ★ 원본 description은 절대 수정하지 않고 통째로 보존.
+  //   메모 입력칸은 "기존 내용 하단에 추가할 새 메모"용 — import 직후엔 항상 비움.
+  const originalDescription = desc
 
   return {
     id: event.id,                  // 임시 ID (importFromGoogle에서 덮어씀)
@@ -218,7 +202,8 @@ export function googleEventToSchedule(event, options = {}) {
     location: event.location || '',
     phone,
     status,
-    memo,
+    memo: '',
+    originalDescription,
     originalDate: null,
     // 멀티 캘린더 메타
     calendarKey: calKey || null,           // 'pool' | 'teamAS:A' | 'teamReport:A' | 'ops' | null
