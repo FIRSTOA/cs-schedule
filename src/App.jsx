@@ -42,8 +42,10 @@ function buildEventBody(s) {
   const baseTitle = s.member && s.member !== '미배정' && !titleAlreadyHasMember ? `${s.member} / ${s.title}` : s.title
   return {
     summary: `${statusTag}${baseTitle}`,
-    // 상태가 '예정'으로 돌아갈 때 colorId를 빈 문자열로 보내 색깔도 기본으로 복귀시킴.
-    colorId: colorId ?? '',
+    // colorId는 status가 색깔 있는 상태(완료/특이/진행중)일 때만 보냄.
+    // 예정/익일로 돌아갈 땐 colorId 키 자체를 빼서 구글에서 기본 색으로 복귀.
+    // (빈 문자열은 구글 API가 invalid로 거부 → 일정 자체 생성/수정 실패)
+    ...(colorId ? { colorId } : {}),
     location: s.location || s.address || '',
     description: composeDescription(s.originalDescription, s.memo),
     start: {
@@ -209,11 +211,13 @@ function AppInner() {
         failCount++
       }
     }
-    if (successCount > 0) {
+    if (successCount > 0 || failCount > 0) {
       actions.addSyncLog({
         time: dayjs().format('HH:mm'),
         type: 'export',
-        msg: `자동 반영 완료 (${successCount}개${failCount > 0 ? `, 실패 ${failCount}개` : ''})`,
+        msg: successCount > 0
+          ? `자동 반영 완료 (${successCount}개${failCount > 0 ? `, 실패 ${failCount}개` : ''})`
+          : `자동 반영 실패 (${failCount}개)`,
         ok: failCount === 0,
       })
     }
