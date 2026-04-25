@@ -1,11 +1,9 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { RefreshCw, Download, Upload, CheckCircle, AlertTriangle, CalendarDays, Clock, Wifi, WifiOff } from 'lucide-react'
+import { RefreshCw, CheckCircle, AlertTriangle, CalendarDays, Clock, Wifi, WifiOff } from 'lucide-react'
 import dayjs from 'dayjs'
 import { useStore, getReadCalendarKeys, resolveCalendar } from '@/store/useStore.jsx'
 import {
   fetchAllEvents,
-  createEvent,
-  updateEvent,
   googleEventToSchedule,
 } from '@/lib/calendarApi'
 
@@ -104,81 +102,6 @@ export default function SyncPage() {
     setLoading(false)
   }
 
-  // ── 수동 반영하기 (앱 → 구글) ─────────────────────────────────────────────
-  const handleExport = async () => {
-    setLoading(true)
-    let successCount = 0
-    let failCount = 0
-
-    const today = dayjs().format('YYYY-MM-DD')
-    const targetSchedules = state.schedules.filter(s => (s.workDate || s.date) >= today)
-
-    if (targetSchedules.length === 0) {
-      actions.addSyncLog({ time: dayjs().format('HH:mm'), type: 'export', msg: '반영할 일정이 없습니다.', ok: false })
-      setLoading(false)
-      return
-    }
-
-    for (const s of targetSchedules) {
-      try {
-        const workDate = s.workDate || s.date
-        const startHour = s.team === 'A' ? 9 : s.team === 'B' ? 12 : s.team === 'C' ? 15 : 18
-        const endHour = startHour
-        const endMin = 30
-        const statusTag = s.status === '완료' ? '[완료] ' : s.status === '특이' ? '[특이] ' : s.status === '진행중' ? '[진행중] ' : ''
-        const colorId = s.status === '완료' ? '8' : s.status === '특이' ? '11' : s.status === '진행중' ? '5' : undefined
-        // 담당자 이름이 이미 title 앞에 포함된 경우 중복 방지
-        const titleAlreadyHasMember = s.member && s.member !== '미배정' && s.title.startsWith(`${s.member} / `)
-        const baseTitle = s.member && s.member !== '미배정' && !titleAlreadyHasMember ? `${s.member} / ${s.title}` : s.title
-        const eventBody = {
-          summary: `${statusTag}${baseTitle}`,
-          ...(colorId ? { colorId } : {}),
-          location: s.location || s.address || '',
-          description: [
-            s.memo ? `메모: ${s.memo}` : '',
-            `팀: ${s.team}팀`,
-            `담당자: ${s.member || '미배정'}`,
-            `상태: ${s.status || '예정'}`,
-            s.phone ? `연락처: ${s.phone}` : '',
-          ].filter(Boolean).join('\n'),
-          start: {
-            dateTime: `${workDate}T${String(startHour).padStart(2, '0')}:00:00+09:00`,
-            timeZone: 'Asia/Seoul',
-          },
-          end: {
-            dateTime: `${workDate}T${String(endHour).padStart(2, '0')}:${String(endMin).padStart(2, '0')}:00+09:00`,
-            timeZone: 'Asia/Seoul',
-          },
-        }
-        if (s.googleEventId) {
-          await updateEvent(s.googleEventId, eventBody)
-        } else {
-          const created = await createEvent(eventBody)
-          actions.updateSchedule({ ...s, googleEventId: created.id })
-        }
-        successCount++
-      } catch (e) {
-        console.error('반영 실패:', s.title, e)
-        failCount++
-      }
-    }
-
-    actions.addSyncLog({
-      time: dayjs().format('HH:mm'),
-      type: 'export',
-      msg: `반영 완료 (성공 ${successCount}개${failCount > 0 ? `, 실패 ${failCount}개` : ''})`,
-      ok: failCount === 0,
-    })
-    setLoading(false)
-  }
-
-  const formatCountdown = (secs) => {
-    if (!secs) return ''
-    const m = Math.floor(secs / 60)
-    const s = secs % 60
-    return `${m}:${String(s).padStart(2, '0')}`
-  }
-
   return (
     <div className="flex flex-col h-full">
       {/* 헤더 */}
@@ -258,36 +181,20 @@ export default function SyncPage() {
           </div>
         </div>
 
-        {/* 동기화 버튼 */}
-        <div className="grid grid-cols-2 gap-3">
-          <button
-            onClick={handleImport}
-            disabled={loading}
-            className="bg-white rounded-2xl p-5 shadow-sm flex flex-col items-center gap-2 active:scale-95 transition-transform disabled:opacity-50"
-          >
-            <div className="w-10 h-10 bg-blue-100 rounded-xl flex items-center justify-center">
-              <Download size={20} className="text-blue-600" />
-            </div>
-            <div className="text-center">
-              <p className="text-sm font-semibold text-slate-900">가져오기</p>
-              <p className="text-xs text-slate-400 mt-0.5">구글 캘린더 → 앱</p>
-            </div>
-          </button>
-
-          <button
-            onClick={handleExport}
-            disabled={loading}
-            className="bg-slate-900 rounded-2xl p-5 shadow-sm flex flex-col items-center gap-2 active:scale-95 transition-transform disabled:opacity-50"
-          >
-            <div className="w-10 h-10 bg-white/20 rounded-xl flex items-center justify-center">
-              <Upload size={20} className="text-white" />
-            </div>
-            <div className="text-center">
-              <p className="text-sm font-semibold text-white">전체 반영</p>
-              <p className="text-xs text-slate-400 mt-0.5">전체 수동 반영</p>
-            </div>
-          </button>
-        </div>
+        {/* 동기화 버튼 — 자동 동기화가 모든 걸 처리하므로 즉시 새로고침 한 종류만. */}
+        <button
+          onClick={handleImport}
+          disabled={loading}
+          className="w-full bg-white rounded-2xl p-5 shadow-sm flex items-center justify-center gap-3 active:scale-95 transition-transform disabled:opacity-50"
+        >
+          <div className="w-10 h-10 bg-blue-100 rounded-xl flex items-center justify-center">
+            <RefreshCw size={20} className="text-blue-600" />
+          </div>
+          <div className="text-left">
+            <p className="text-sm font-semibold text-slate-900">새로고침</p>
+            <p className="text-xs text-slate-400 mt-0.5">구글 캘린더 즉시 다시 가져오기</p>
+          </div>
+        </button>
 
         {/* 로딩 표시 */}
         {loading && (
