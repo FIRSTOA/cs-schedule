@@ -155,8 +155,18 @@ export default function TodayPage() {
     return counts
   }, [state.schedules, today, nextWorkday, activeTeam])
 
-  const handleComplete = (id) => actions.setStatus(id, '완료')
-  const handleIssue = (id) => actions.setStatus(id, '특이')
+  // 완료/특이 버튼은 토글 — 같은 상태에서 다시 누르면 '예정'으로 되돌림.
+  const handleComplete = (item) => actions.setStatus(item.id, item.status === '완료' ? '예정' : '완료')
+  const handleIssue = (item) => actions.setStatus(item.id, item.status === '특이' ? '예정' : '특이')
+
+  // 미루기 버튼 토글 — 이미 미뤄진 일정(originalDate 보유)에서 다시 누르면 원래 날짜로 복구.
+  const handlePostpone = (item) => {
+    if (item.originalDate && item.originalDate !== item.date) {
+      actions.unpostponeSchedule(item.id)
+      return
+    }
+    setPostponeItem(item)
+  }
 
   const handleSave = (formData) => {
     if (formData.id) {
@@ -395,7 +405,7 @@ export default function TodayPage() {
                       item={item}
                       onTap={handleTapCard}
                       onComplete={handleComplete}
-                      onPostpone={(item) => setPostponeItem(item)}
+                      onPostpone={handlePostpone}
                       onIssue={handleIssue}
                     />
                   </div>

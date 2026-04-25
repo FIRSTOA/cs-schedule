@@ -22,6 +22,16 @@ function getStartHour(team) {
   return team === 'A' ? 9 : team === 'B' ? 12 : team === 'C' ? 15 : team === 'D' ? 18 : 9
 }
 
+// description 합치기 — 원본은 절대 수정하지 않고, 메모칸에 새로 입력한 내용만 맨 끝에 추가.
+// 완료/특이/미루기 등 상태 변경 시 memo가 비어 있으면 description은 원본 그대로 유지됨.
+export function composeDescription(originalDescription, memo) {
+  const base = (originalDescription || '').replace(/\s+$/, '')
+  const addition = (memo || '').trim()
+  if (!addition) return base
+  if (!base) return addition
+  return `${base}\n${addition}`
+}
+
 // 일정 → 구글 이벤트 본문 변환
 function buildEventBody(s) {
   const workDate = s.workDate || s.date
@@ -32,15 +42,10 @@ function buildEventBody(s) {
   const baseTitle = s.member && s.member !== '미배정' && !titleAlreadyHasMember ? `${s.member} / ${s.title}` : s.title
   return {
     summary: `${statusTag}${baseTitle}`,
-    ...(colorId ? { colorId } : {}),
+    // 상태가 '예정'으로 돌아갈 때 colorId를 빈 문자열로 보내 색깔도 기본으로 복귀시킴.
+    colorId: colorId ?? '',
     location: s.location || s.address || '',
-    description: [
-      s.memo ? `메모: ${s.memo}` : '',
-      s.team ? `팀: ${s.team}팀` : '',
-      `담당자: ${s.member || '미배정'}`,
-      `상태: ${s.status || '예정'}`,
-      s.phone ? `연락처: ${s.phone}` : '',
-    ].filter(Boolean).join('\n'),
+    description: composeDescription(s.originalDescription, s.memo),
     start: {
       dateTime: `${workDate}T${String(startHour).padStart(2, '0')}:00:00+09:00`,
       timeZone: 'Asia/Seoul',
@@ -173,20 +178,28 @@ function AppInner() {
     if (targets.length === 0) return
     let successCount = 0
     let failCount = 0
-    const successIds = []
     for (const s of targets) {
       try {
         const eventBody = buildEventBody(s)
         const targetCalendarId = resolveScheduleCalendarId(s, state.calendars)
         if (s.googleEventId) {
           await updateEvent(s.googleEventId, eventBody, targetCalendarId)
-          successIds.push(s.id)
+          // 로컬을 방금 보낸 결과로 맞춰 둠: originalDescription을 합쳐진 결과로 갱신하고
+          // memo 입력칸은 비워서 같은 메모가 다음 저장 때 또 붙는 일을 막음.
+          actions.updateSchedule({
+            id: s.id,
+            originalDescription: eventBody.description,
+            memo: '',
+            localDirty: false,
+          })
         } else {
           const created = await createEvent(eventBody, targetCalendarId)
           actions.updateSchedule({
             ...s,
             googleEventId: created.id,
             calendarId: created._calendarId || targetCalendarId,
+            originalDescription: eventBody.description,
+            memo: '',
             localDirty: false,
           })
         }
@@ -196,7 +209,6 @@ function AppInner() {
         failCount++
       }
     }
-    if (successIds.length > 0) actions.clearLocalDirty(successIds)
     if (successCount > 0) {
       actions.addSyncLog({
         time: dayjs().format('HH:mm'),

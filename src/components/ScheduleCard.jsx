@@ -124,11 +124,11 @@ export default function ScheduleCard({ item, onTap, onComplete, onPostpone, onIs
             )}
           </div>
 
-          {/* 액션 버튼 */}
+          {/* 액션 버튼 — 완료/특이/미루기는 다시 누르면 토글되어 원복 */}
           <div className="flex gap-1.5">
-            <ActionBtn label="완료" onClick={() => onComplete(item.id)} disabled={isDone} color="emerald" />
-            <ActionBtn label="미루기" onClick={() => onPostpone(item)} color="violet" />
-            <ActionBtn label="특이" onClick={() => onIssue(item.id)} color="rose" active={isIssue} />
+            <ActionBtn label={isDone ? '완료 해제' : '완료'} onClick={() => onComplete(item)} color="emerald" active={isDone} />
+            <ActionBtn label={item.originalDate && item.originalDate !== item.date ? '미루기 해제' : '미루기'} onClick={() => onPostpone(item)} color="violet" active={!!(item.originalDate && item.originalDate !== item.date)} />
+            <ActionBtn label={isIssue ? '특이 해제' : '특이'} onClick={() => onIssue(item)} color="rose" active={isIssue} />
             <ActionBtn label="🗺 네비" onClick={() => setNaviOpen(true)} color="slate" />
           </div>
         </div>
@@ -146,9 +146,9 @@ export default function ScheduleCard({ item, onTap, onComplete, onPostpone, onIs
 
 function ActionBtn({ label, onClick, disabled, color, active }) {
   const colors = {
-    emerald: 'bg-emerald-50 text-emerald-700 active:bg-emerald-100',
-    violet:  'bg-violet-50 text-violet-700 active:bg-violet-100',
-    rose:    active ? 'bg-rose-500 text-white' : 'bg-rose-50 text-rose-700 active:bg-rose-100',
+    emerald: active ? 'bg-emerald-500 text-white' : 'bg-emerald-50 text-emerald-700 active:bg-emerald-100',
+    violet:  active ? 'bg-violet-500 text-white'  : 'bg-violet-50 text-violet-700 active:bg-violet-100',
+    rose:    active ? 'bg-rose-500 text-white'    : 'bg-rose-50 text-rose-700 active:bg-rose-100',
     slate:   'bg-slate-100 text-slate-600 active:bg-slate-200',
   }
   return (

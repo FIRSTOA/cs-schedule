@@ -182,6 +182,17 @@ function reducer(state, action) {
         }),
       }
     }
+    case 'UNPOSTPONE_SCHEDULE': {
+      // 미루기 해제 — originalDate가 있으면 그 날짜로 되돌리고 originalDate를 비움.
+      return {
+        ...state,
+        schedules: state.schedules.map(s => {
+          if (s.id !== action.id) return s
+          if (!s.originalDate) return s
+          return { ...s, date: s.originalDate, originalDate: null, localDirty: true }
+        }),
+      }
+    }
     case 'CLEAR_LOCAL_DIRTY': {
       // 자동 반영이 성공한 일정의 localDirty 플래그 해제
       const ids = new Set(action.ids)
@@ -359,6 +370,7 @@ export function StoreProvider({ children }) {
     deleteSchedule: useCallback((id) => dispatch({ type: 'DELETE_SCHEDULE', id }), []),
     setStatus: useCallback((id, status) => dispatch({ type: 'SET_STATUS', id, status }), []),
     postponeSchedule: useCallback((id, date) => dispatch({ type: 'POSTPONE_SCHEDULE', id, date }), []),
+    unpostponeSchedule: useCallback((id) => dispatch({ type: 'UNPOSTPONE_SCHEDULE', id }), []),
     addMember: useCallback((team, name) => dispatch({ type: 'ADD_MEMBER', team, name }), []),
     removeMember: useCallback((team, name) => dispatch({ type: 'REMOVE_MEMBER', team, name }), []),
     setTeamLabel: useCallback((team, label) => dispatch({ type: 'SET_TEAM_LABEL', team, label }), []),
