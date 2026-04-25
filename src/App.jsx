@@ -142,10 +142,13 @@ function AppInner() {
         if (errors && errors.length > 0) {
           errors.forEach(err => {
             const calName = idToKey[err.calendarId]?.meta?.label || err.calendarId.slice(0, 24) + '…'
+            const tag = err.reason ? `${err.reason}${err.code ? `/${err.code}` : ''}` : (err.code || '')
+            const detail = err.detailMessage || err.error
+            const suffix = tag ? ` [${tag}] ${detail}` : ` ${detail}`
             actions.addSyncLog({
               time: dayjs().format('HH:mm'),
               type: 'import',
-              msg: `실패: ${calName} → ${err.error}`,
+              msg: `실패: ${calName} →${suffix}`,
               ok: false,
             })
           })

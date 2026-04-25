@@ -83,10 +83,14 @@ export default function SyncPage() {
       if (errors && errors.length > 0) {
         console.warn('실패한 캘린더 상세:', errors)
         errors.forEach(err => {
+          const calName = idToKey[err.calendarId]?.meta?.label || err.calendarId.slice(0, 24) + '…'
+          const tag = err.reason ? `${err.reason}${err.code ? `/${err.code}` : ''}` : (err.code || '')
+          const detail = err.detailMessage || err.error
+          const suffix = tag ? ` [${tag}] ${detail}` : ` ${detail}`
           actions.addSyncLog({
             time: dayjs().format('HH:mm'),
             type: 'import',
-            msg: `실패: ${err.calendarId.slice(0, 30)}… → ${err.error}`,
+            msg: `실패: ${calName} →${suffix}`,
             ok: false,
           })
         })

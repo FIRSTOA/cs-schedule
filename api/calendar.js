@@ -117,7 +117,18 @@ export default async function handler(req, res) {
         if (r.status === 'fulfilled') {
           events.push(...r.value)
         } else {
-          errors.push({ calendarId: targetIds[idx], error: r.reason?.message || String(r.reason) })
+          const reason = r.reason || {}
+          // googleapis 에러는 reason.errors[0].reason / reason.code / reason.response?.data?.error 에 상세 정보가 들어있음
+          const googleErr = reason.response?.data?.error || {}
+          const detail = googleErr.errors?.[0] || reason.errors?.[0] || {}
+          errors.push({
+            calendarId: targetIds[idx],
+            error: reason.message || String(reason),
+            code: reason.code || googleErr.code || null,
+            reason: detail.reason || null,
+            domain: detail.domain || null,
+            detailMessage: detail.message || googleErr.message || null,
+          })
         }
       })
       return res.status(200).json({ events, errors })
