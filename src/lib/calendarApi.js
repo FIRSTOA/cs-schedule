@@ -148,17 +148,10 @@ export function googleEventToSchedule(event, options = {}) {
   // description 파싱
   const desc = event.description || ''
 
-  // 팀 결정 우선순위:
-  //   1) 캘린더 출처가 teamAS:X / teamReport:X → 그 X
-  //   2) description의 "팀: X팀"
-  //   3) 시간대 기반 추정 (단일 캘린더 시절 fallback)
-  let team = null
-  if (calMeta?.team) {
-    team = calMeta.team
-  } else {
-    const teamMatch = desc.match(/팀:\s*([ABCD])팀/)
-    team = teamMatch ? teamMatch[1] : detectTeamByTime(rawStart)
-  }
+  // 팀 결정 — 일정의 실제 시작 시간으로 분류.
+  //   A=오전(6~11시), B=정오(11~14시), C=오후(14~17시), D=저녁(17~22시)
+  //   캘린더 출처(teamAS:A 등)와 무관하게 시간 슬롯이 곧 팀.
+  const team = detectTeamByTime(rawStart)
   const fixedTime = TEAM_TIME[team] || TEAM_TIME['A']
 
   // 제목 파싱: "담당자 / 업무내용" 형식 (앞의 상태 태그 제거)
