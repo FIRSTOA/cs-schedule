@@ -122,11 +122,24 @@ function buildInitialState() {
 function reducer(state, action) {
   switch (action.type) {
     case 'ADD_SCHEDULE': {
+      // 신규 일정 — 명시적 calendarKey 없으면 팀 기준 teamAS로 기본 설정
+      const payload = action.payload
+      let calendarKey = payload.calendarKey
+      let calendarRole = payload.calendarRole
+      let calendarId = payload.calendarId
+      if (!calendarKey && payload.team && state.calendars?.teamAS?.[payload.team]) {
+        calendarKey = `teamAS:${payload.team}`
+        calendarRole = 'teamAS'
+        calendarId = state.calendars.teamAS[payload.team].id
+      }
       const newItem = {
-        ...action.payload,
+        ...payload,
+        calendarKey: calendarKey || null,
+        calendarRole: calendarRole || null,
+        calendarId: calendarId || null,
         id: state.nextId,
-        originalDate: action.payload.originalDate || null,
-        localDirty: true, // 자동 반영 대상 표시
+        originalDate: payload.originalDate || null,
+        localDirty: true,
       }
       return { ...state, schedules: [...state.schedules, newItem], nextId: state.nextId + 1 }
     }

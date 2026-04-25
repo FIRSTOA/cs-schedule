@@ -11,6 +11,14 @@ const STATUS_STYLES = {
   특이:   { bar: 'bg-rose-500',    badge: 'bg-rose-50 text-rose-700 border-rose-200' },
 }
 
+// 카테고리 배지 (출처 캘린더 표시)
+const CATEGORY_BADGE = {
+  pool:       { label: '익일통합', cls: 'bg-amber-100 text-amber-700' },
+  teamAS:     { label: 'A/S',      cls: 'bg-blue-100 text-blue-700' },
+  ops:        { label: '납품',     cls: 'bg-purple-100 text-purple-700' },
+  teamReport: { label: '점검',     cls: 'bg-slate-100 text-slate-600' },
+}
+
 export default function ScheduleCard({ item, onTap, onComplete, onPostpone, onIssue }) {
   const style = STATUS_STYLES[item.status] || STATUS_STYLES['예정']
   const isDone = item.status === '완료'
@@ -65,6 +73,15 @@ export default function ScheduleCard({ item, onTap, onComplete, onPostpone, onIs
               </p>
             </div>
             <div className="flex items-center gap-1.5 shrink-0 mt-0.5">
+              {(() => {
+                const role = item.calendarRole || (item.calendarKey?.split(':')[0])
+                const cat = role ? CATEGORY_BADGE[role] : null
+                return cat ? (
+                  <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded ${cat.cls}`}>
+                    {cat.label}
+                  </span>
+                ) : null
+              })()}
               <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full border ${style.badge}`}>
                 {item.status}
               </span>

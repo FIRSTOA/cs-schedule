@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { StoreProvider, useStore } from '@/store/useStore.jsx'
+import { StoreProvider, useStore, getReadCalendarKeys, resolveCalendar } from '@/store/useStore.jsx'
 import NavBar from '@/components/NavBar'
 import TodayPage from '@/pages/TodayPage'
 import CalendarPage from '@/pages/CalendarPage'
@@ -17,22 +17,26 @@ import {
 
 const AUTO_SYNC_INTERVAL = 30 * 1000 // 30초
 
-// 일정 하나를 구글 캘린더에 반영하는 함수
-async function pushScheduleToGoogle(s) {
+// 캘린더 역할별 시간 블록 — A/S와 점검/마감만 시간 고정. pool/ops는 자유 시간.
+function getStartHour(team) {
+  return team === 'A' ? 9 : team === 'B' ? 12 : team === 'C' ? 15 : team === 'D' ? 18 : 9
+}
+
+// 일정 → 구글 이벤트 본문 변환
+function buildEventBody(s) {
   const workDate = s.workDate || s.date
-  const startHour = s.team === 'A' ? 9 : s.team === 'B' ? 12 : s.team === 'C' ? 15 : 18
-  const endHour = startHour
-  const endMin = 30
+  const startHour = getStartHour(s.team)
   const statusTag = s.status === '완료' ? '[완료] ' : s.status === '특이' ? '[특이] ' : s.status === '진행중' ? '[진행중] ' : ''
   const colorId = s.status === '완료' ? '8' : s.status === '특이' ? '11' : s.status === '진행중' ? '5' : undefined
-  const baseTitle = s.member && s.member !== '미배정' ? `${s.member} / ${s.title}` : s.title
-  const eventBody = {
+  const titleAlreadyHasMember = s.member && s.member !== '미배정' && s.title.startsWith(`${s.member} / `)
+  const baseTitle = s.member && s.member !== '미배정' && !titleAlreadyHasMember ? `${s.member} / ${s.title}` : s.title
+  return {
     summary: `${statusTag}${baseTitle}`,
     ...(colorId ? { colorId } : {}),
     location: s.location || s.address || '',
     description: [
       s.memo ? `메모: ${s.memo}` : '',
-      `팀: ${s.team}팀`,
+      s.team ? `팀: ${s.team}팀` : '',
       `담당자: ${s.member || '미배정'}`,
       `상태: ${s.status || '예정'}`,
       s.phone ? `연락처: ${s.phone}` : '',
@@ -42,15 +46,25 @@ async function pushScheduleToGoogle(s) {
       timeZone: 'Asia/Seoul',
     },
     end: {
-      dateTime: `${workDate}T${String(endHour).padStart(2, '0')}:${String(endMin).padStart(2, '0')}:00+09:00`,
+      dateTime: `${workDate}T${String(startHour).padStart(2, '0')}:30:00+09:00`,
       timeZone: 'Asia/Seoul',
     },
   }
-  if (s.googleEventId) {
-    return { ...s, _updated: true, eventBody }
-  } else {
-    return { ...s, _created: true, eventBody }
+}
+
+// 일정의 출처 캘린더 ID 결정 — calendarId 직접 들고 있으면 그것, 없으면 등록부에서 키로 해석.
+function resolveScheduleCalendarId(schedule, calendars) {
+  if (schedule.calendarId) return schedule.calendarId
+  if (schedule.calendarKey) {
+    const meta = resolveCalendar(calendars, schedule.calendarKey)
+    if (meta) return meta.id
   }
+  // fallback: teamAS:{team}로 추정
+  if (schedule.team) {
+    const meta = resolveCalendar(calendars, `teamAS:${schedule.team}`)
+    if (meta) return meta.id
+  }
+  return null // 백엔드 기본값 사용
 }
 
 function AppInner() {
@@ -72,48 +86,72 @@ function AppInner() {
   // 원격 설정 적용 직후엔 push 트리거 안 함 (echo 방지)
   const skipNextConfigPush = useRef(false)
 
-  // ── 가져오기 핵심 로직 (silent: 로그 남기지 않음) ────────────────────────
+  // ── 가져오기 핵심 로직 (멀티 캘린더) ─────────────────────────────────────
   const doImport = useCallback(async ({ silent = false } = {}) => {
     if (importInFlight.current) return false
     importInFlight.current = true
     try {
-      // 일정 + 설정을 동시에 가져옴
-      const [events, remoteConfig] = await Promise.all([
-        fetchAllEvents(),
+      // 등록부에서 read 대상 캘린더 ID 모음
+      const readKeys = getReadCalendarKeys()
+      const idToKey = {}
+      const calendarIds = []
+      for (const key of readKeys) {
+        const meta = resolveCalendar(state.calendars, key)
+        if (meta?.id) {
+          idToKey[meta.id] = { key, meta }
+          calendarIds.push(meta.id)
+        }
+      }
+
+      // 일정(여러 캘린더 병렬) + 설정 동시 fetch
+      const [listResult, remoteConfig] = await Promise.all([
+        fetchAllEvents(calendarIds),
         fetchAppConfig().catch(() => null),
       ])
+      const { events, errors } = listResult
+      if (errors && errors.length > 0) {
+        // 일부 캘린더 실패만 로그로 남기고 진행
+        console.warn('일부 캘린더 동기화 실패:', errors)
+      }
+
       let nextId = Math.max(...state.schedules.map(s => s.id || 0), 0) + 1
       const mapped = events.map(ev => {
-        const s = googleEventToSchedule(ev)
+        const ctx = idToKey[ev._calendarId] || {}
+        const s = googleEventToSchedule(ev, { calKey: ctx.key, calMeta: ctx.meta })
         s.id = s.id || nextId++
         return s
       })
       actions.importFromGoogle(mapped)
-      // 원격 설정 적용 (있을 때만)
-      if (remoteConfig && (remoteConfig.members || remoteConfig.teamLabels)) {
+
+      // 원격 설정 적용
+      if (remoteConfig && (remoteConfig.members || remoteConfig.teamLabels || remoteConfig.calendars)) {
         skipNextConfigPush.current = true
         actions.applyRemoteConfig(remoteConfig)
-        // 시그니처 갱신 → 동일 내용 재push 방지
         lastPushedConfig.current = JSON.stringify({
           members: remoteConfig.members || null,
           teamLabels: remoteConfig.teamLabels || null,
+          calendars: remoteConfig.calendars || null,
         })
       }
       actions.setGoogleConnected(true)
       if (!silent) {
         const now = dayjs()
-        actions.addSyncLog({ time: now.format('HH:mm'), type: 'import', msg: `동기화 완료 (${mapped.length}개)`, ok: true })
+        const errNote = errors && errors.length > 0 ? ` (캘린더 ${errors.length}개 실패)` : ''
+        actions.addSyncLog({ time: now.format('HH:mm'), type: 'import', msg: `동기화 완료 (${mapped.length}개)${errNote}`, ok: errors.length === 0 })
       }
       return true
     } catch (e) {
       actions.setGoogleConnected(false)
+      if (!silent) {
+        actions.addSyncLog({ time: dayjs().format('HH:mm'), type: 'import', msg: `동기화 실패: ${e.message}`, ok: false })
+      }
       return false
     } finally {
       importInFlight.current = false
     }
-  }, [state.schedules, actions])
+  }, [state.schedules, state.calendars, actions])
 
-  // ── 반영하기 핵심 로직 ────────────────────────────────────────────────────
+  // ── 반영하기 핵심 로직 (per-schedule 캘린더 ID 사용) ─────────────────────
   const doExport = useCallback(async (schedules) => {
     const today = dayjs().format('YYYY-MM-DD')
     const targets = schedules.filter(s => (s.workDate || s.date) >= today)
@@ -123,42 +161,19 @@ function AppInner() {
     const successIds = []
     for (const s of targets) {
       try {
-        const workDate = s.workDate || s.date
-        const startHour = s.team === 'A' ? 9 : s.team === 'B' ? 12 : s.team === 'C' ? 15 : 18
-        const endHour = startHour
-        const endMin = 30
-        const statusTag = s.status === '완료' ? '[완료] ' : s.status === '특이' ? '[특이] ' : s.status === '진행중' ? '[진행중] ' : ''
-        const colorId = s.status === '완료' ? '8' : s.status === '특이' ? '11' : s.status === '진행중' ? '5' : undefined
-        // 담당자 이름이 이미 title 앞에 포함된 경우 중복 방지
-        const titleAlreadyHasMember = s.member && s.member !== '미배정' && s.title.startsWith(`${s.member} / `)
-        const baseTitle = s.member && s.member !== '미배정' && !titleAlreadyHasMember ? `${s.member} / ${s.title}` : s.title
-        const eventBody = {
-          summary: `${statusTag}${baseTitle}`,
-          ...(colorId ? { colorId } : {}),
-          location: s.location || s.address || '',
-          description: [
-            s.memo ? `메모: ${s.memo}` : '',
-            `팀: ${s.team}팀`,
-            `담당자: ${s.member || '미배정'}`,
-            `상태: ${s.status || '예정'}`,
-            s.phone ? `연락처: ${s.phone}` : '',
-          ].filter(Boolean).join('\n'),
-          start: {
-            dateTime: `${workDate}T${String(startHour).padStart(2, '0')}:00:00+09:00`,
-            timeZone: 'Asia/Seoul',
-          },
-          end: {
-            dateTime: `${workDate}T${String(endHour).padStart(2, '0')}:${String(endMin).padStart(2, '0')}:00+09:00`,
-            timeZone: 'Asia/Seoul',
-          },
-        }
+        const eventBody = buildEventBody(s)
+        const targetCalendarId = resolveScheduleCalendarId(s, state.calendars)
         if (s.googleEventId) {
-          await updateEvent(s.googleEventId, eventBody)
+          await updateEvent(s.googleEventId, eventBody, targetCalendarId)
           successIds.push(s.id)
         } else {
-          const created = await createEvent(eventBody)
-          // googleEventId 부여하면서 동시에 localDirty 해제
-          actions.updateSchedule({ ...s, googleEventId: created.id, localDirty: false })
+          const created = await createEvent(eventBody, targetCalendarId)
+          actions.updateSchedule({
+            ...s,
+            googleEventId: created.id,
+            calendarId: created._calendarId || targetCalendarId,
+            localDirty: false,
+          })
         }
         successCount++
       } catch (e) {
@@ -166,9 +181,7 @@ function AppInner() {
         failCount++
       }
     }
-    if (successIds.length > 0) {
-      actions.clearLocalDirty(successIds)
-    }
+    if (successIds.length > 0) actions.clearLocalDirty(successIds)
     if (successCount > 0) {
       actions.addSyncLog({
         time: dayjs().format('HH:mm'),
@@ -177,7 +190,7 @@ function AppInner() {
         ok: failCount === 0,
       })
     }
-  }, [actions])
+  }, [actions, state.calendars])
 
   // ── 앱 시작 시 최초 동기화 + 30초 자동 + 가시성/포커스 트리거 ─────────────
   useEffect(() => {
@@ -227,21 +240,22 @@ function AppInner() {
     }, 3000)
   }, [state.schedules]) // eslint-disable-line
 
-  // ── 멤버/팀라벨 변경 시 구글 캘린더에 자동 push (디바운스 1.5초) ─────────
+  // ── 멤버/팀라벨/캘린더등록부 변경 시 구글 캘린더에 자동 push (디바운스 1.5초) ─────
   useEffect(() => {
     if (!initialLoadDone.current) return
-    // 원격에서 방금 적용된 직후라면 push 스킵
     if (skipNextConfigPush.current) {
       skipNextConfigPush.current = false
       lastPushedConfig.current = JSON.stringify({
         members: state.members,
         teamLabels: state.teamLabels,
+        calendars: state.calendars,
       })
       return
     }
     const sig = JSON.stringify({
       members: state.members,
       teamLabels: state.teamLabels,
+      calendars: state.calendars,
     })
     if (sig === lastPushedConfig.current) return
 
@@ -251,12 +265,13 @@ function AppInner() {
         await saveAppConfig({
           members: state.members,
           teamLabels: state.teamLabels,
+          calendars: state.calendars,
         })
         lastPushedConfig.current = sig
         actions.addSyncLog({
           time: dayjs().format('HH:mm'),
           type: 'config',
-          msg: '팀원 설정 동기화 완료',
+          msg: '설정 동기화 완료',
           ok: true,
         })
       } catch (e) {
@@ -268,7 +283,7 @@ function AppInner() {
         })
       }
     }, 1500)
-  }, [state.members, state.teamLabels]) // eslint-disable-line
+  }, [state.members, state.teamLabels, state.calendars]) // eslint-disable-line
 
   const pages = {
     today: <TodayPage />,

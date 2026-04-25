@@ -124,8 +124,12 @@ function detectTeamByTime(timeStr) {
 }
 
 // ── 구글 이벤트 → 앱 스케줄 변환 ──────────────────────────────────────────
-// 앱이 기대하는 필드: team, member, title, date, start, end, location, phone, status, memo
-export function googleEventToSchedule(event) {
+// options:
+//   calKey  — 'pool' | 'teamAS:A' | 'teamReport:B' | 'ops' (출처 캘린더 키)
+//   calMeta — { id, label, role, team }
+// 출처 캘린더가 있으면 그 정보를 우선해서 team/role 결정. 없으면 옛 방식(description/시간) fallback.
+export function googleEventToSchedule(event, options = {}) {
+  const { calKey, calMeta } = options
   const startRaw = event.start?.dateTime || event.start?.date || ''
   const endRaw = event.end?.dateTime || event.end?.date || ''
 
@@ -134,7 +138,6 @@ export function googleEventToSchedule(event) {
   let rawStart = '09:00'
   if (startRaw.includes('T')) {
     const d = new Date(startRaw)
-    // KST 변환 (UTC+9)
     const kst = new Date(d.getTime() + 9 * 60 * 60 * 1000)
     date = kst.toISOString().slice(0, 10)
     rawStart = kst.toISOString().slice(11, 16)
@@ -145,9 +148,17 @@ export function googleEventToSchedule(event) {
   // description 파싱
   const desc = event.description || ''
 
-  // 팀 결정: description의 "팀: X팀" 우선, 없으면 시간 기반
-  const teamMatch = desc.match(/팀:\s*([ABCD])팀/)
-  const team = teamMatch ? teamMatch[1] : detectTeamByTime(rawStart)
+  // 팀 결정 우선순위:
+  //   1) 캘린더 출처가 teamAS:X / teamReport:X → 그 X
+  //   2) description의 "팀: X팀"
+  //   3) 시간대 기반 추정 (단일 캘린더 시절 fallback)
+  let team = null
+  if (calMeta?.team) {
+    team = calMeta.team
+  } else {
+    const teamMatch = desc.match(/팀:\s*([ABCD])팀/)
+    team = teamMatch ? teamMatch[1] : detectTeamByTime(rawStart)
+  }
   const fixedTime = TEAM_TIME[team] || TEAM_TIME['A']
 
   // 제목 파싱: "담당자 / 업무내용" 형식 (앞의 상태 태그 제거)
@@ -202,12 +213,16 @@ export function googleEventToSchedule(event) {
     member,
     title: cleanTitle,
     date,
-    start: fixedTime.start,        // 앱이 기대하는 필드명: start
-    end: fixedTime.end,            // 앱이 기대하는 필드명: end
-    location: event.location || '', // 앱이 기대하는 필드명: location
+    start: fixedTime.start,
+    end: fixedTime.end,
+    location: event.location || '',
     phone,
     status,
     memo,
     originalDate: null,
+    // 멀티 캘린더 메타
+    calendarKey: calKey || null,           // 'pool' | 'teamAS:A' | 'teamReport:A' | 'ops' | null
+    calendarId: event._calendarId || calMeta?.id || null,
+    calendarRole: calMeta?.role || null,   // 'pool' | 'teamAS' | 'teamReport' | 'ops'
   }
 }
