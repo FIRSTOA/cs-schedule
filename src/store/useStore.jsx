@@ -122,12 +122,19 @@ function buildInitialState() {
 function reducer(state, action) {
   switch (action.type) {
     case 'ADD_SCHEDULE': {
-      // 신규 일정 — 명시적 calendarKey 없으면 팀 기준 teamAS로 기본 설정
+      // 신규 일정 — 명시적 calendarKey 우선. 없으면 팀 기준 teamAS로 기본.
       const payload = action.payload
       let calendarKey = payload.calendarKey
       let calendarRole = payload.calendarRole
       let calendarId = payload.calendarId
-      if (!calendarKey && payload.team && state.calendars?.teamAS?.[payload.team]) {
+      if (calendarKey) {
+        // calendarKey만 주어진 경우 → 등록부에서 id/role 채움
+        const meta = resolveCalendar(state.calendars, calendarKey)
+        if (meta) {
+          calendarId = calendarId || meta.id
+          calendarRole = calendarRole || meta.role
+        }
+      } else if (payload.team && state.calendars?.teamAS?.[payload.team]) {
         calendarKey = `teamAS:${payload.team}`
         calendarRole = 'teamAS'
         calendarId = state.calendars.teamAS[payload.team].id

@@ -66,14 +66,14 @@ export default function TodayPage() {
   }, [categoryFilter])
 
   // 일정이 현재 화면에 표시 대상인지 — 메인 화면에서는 점검/마감 항상 제외.
-  // pool/ops는 팀 무관 (전사). teamAS는 선택된 팀만.
+  // teamAS와 pool은 팀(시간 슬롯)별 분리. ops만 팀 무관 (전사).
   const matchesTeamAndCategory = (s) => {
     const role = s.calendarRole || (s.calendarKey?.split(':')[0]) || (s.team ? 'teamAS' : null)
     if (!role) return false // 메타가 없으면 메인 화면에서 제외 (잔재 가능성)
     if (role === 'teamReport') return false
     if (!allowedRoles.has(role)) return false
-    if (role === 'teamAS') return s.team === activeTeam
-    return true // pool, ops는 팀 무관
+    if (role === 'teamAS' || role === 'pool') return s.team === activeTeam
+    return true // ops만 팀 무관
   }
 
   // ── 일정 분류 ──────────────────────────────────────────────────────────────
@@ -121,7 +121,7 @@ export default function TodayPage() {
     const inScope = state.schedules.filter(s => {
       const role = s.calendarRole || (s.calendarKey?.split(':')[0]) || (s.team ? 'teamAS' : null)
       if (!role || role === 'teamReport') return false
-      if (role === 'teamAS') return s.team === activeTeam
+      if (role === 'teamAS' || role === 'pool') return s.team === activeTeam
       return true
     })
     const todayItems = inScope.filter(s => s.date === today)
@@ -142,7 +142,7 @@ export default function TodayPage() {
     state.schedules.forEach(s => {
       const role = s.calendarRole || (s.calendarKey?.split(':')[0]) || (s.team ? 'teamAS' : null)
       if (!role || role === 'teamReport') return
-      if (role === 'teamAS' && s.team !== activeTeam) return
+      if ((role === 'teamAS' || role === 'pool') && s.team !== activeTeam) return
       const isToday = s.date === today
       const isNextWorkday = s.date === nextWorkday
       const isPostponed = s.originalDate === today
@@ -190,7 +190,7 @@ export default function TodayPage() {
     const inScope = state.schedules.filter(s => {
       const role = s.calendarRole || (s.calendarKey?.split(':')[0]) || (s.team ? 'teamAS' : null)
       if (!role || role === 'teamReport') return false
-      if (role === 'teamAS' && s.team !== activeTeam) return false
+      if ((role === 'teamAS' || role === 'pool') && s.team !== activeTeam) return false
       // 카테고리 필터도 반영
       return allowedRoles.has(role)
     })

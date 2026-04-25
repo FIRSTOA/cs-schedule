@@ -7,6 +7,16 @@ import dayjs from 'dayjs'
 const STATUSES = ['예정', '진행중', '완료', '익일', '특이']
 const TEAMS = ['A', 'B', 'C', 'D']
 
+// ── 캘린더 선택지 ────────────────────────────────────────────────────────────
+// teamAS / teamReport는 팀별 분리되므로 calendarKey = `${role}:${team}`로 결정.
+// pool / ops는 단일 캘린더 (팀 무관) — 팀은 시간 슬롯 결정용.
+const CALENDAR_OPTIONS = [
+  { value: 'teamAS',     label: 'A/S',      desc: '팀별 활성 작업', needsTeam: true  },
+  { value: 'pool',       label: '익일통합', desc: '접수 풀',        needsTeam: false },
+  { value: 'teamReport', label: '점검/마감', desc: '팀별 점검',      needsTeam: true  },
+  { value: 'ops',        label: '납품/운영', desc: '전사 운영',      needsTeam: false },
+]
+
 // ── 팀별 고정 시간 (회사 룰) ──────────────────────────────────────────────────
 export const TEAM_TIME = {
   A: { start: '09:00', end: '09:30', label: 'A팀', sub: '오전 9시' },
@@ -28,9 +38,12 @@ export default function ScheduleForm({ item, onSave, onDelete, onClose }) {
   // 팀 결정: 기존 아이템이면 그 팀, 신규면 'A'
   const initTeam = item?.team || 'A'
   const initTime = TEAM_TIME[initTeam]
+  // 캘린더 결정: 기존 아이템이면 그 role, 신규면 'teamAS' (A/S 기본)
+  const initCalendarRole = item?.calendarRole || 'teamAS'
 
   const [form, setForm] = useState({
     team: initTeam,
+    calendarRole: initCalendarRole,
     member: '미배정',
     rawTitle: '',
     date: dayjs().format('YYYY-MM-DD'),
@@ -42,6 +55,7 @@ export default function ScheduleForm({ item, onSave, onDelete, onClose }) {
     memo: '',
     googleEventId: null,
     ...item,
+    calendarRole: initCalendarRole,
     // 기존 아이템이면 rawTitle 추출, 신규면 빈 문자열
     rawTitle: item?.title ? item.title.replace(/^.+?\s*\/\s*/, '').trim() : '',
     // 기존 아이템이면 시간 유지, 신규면 팀 고정 시간
@@ -72,13 +86,42 @@ export default function ScheduleForm({ item, onSave, onDelete, onClose }) {
       return
     }
     const title = buildTitle(form.member, form.rawTitle)
-    onSave({ ...form, title })
+    // calendarKey 빌드: teamAS/teamReport는 팀별, pool/ops는 단일
+    const opt = CALENDAR_OPTIONS.find(o => o.value === form.calendarRole)
+    const calendarKey = opt?.needsTeam ? `${form.calendarRole}:${form.team}` : form.calendarRole
+    onSave({ ...form, title, calendarKey, calendarRole: form.calendarRole })
   }
 
   const set = (key) => (e) => setForm(f => ({ ...f, [key]: e.target.value }))
 
+  const currentCalOpt = CALENDAR_OPTIONS.find(o => o.value === form.calendarRole) || CALENDAR_OPTIONS[0]
+
   return (
     <div className="px-5 py-4 space-y-4 pb-8">
+
+      {/* 캘린더 선택 */}
+      <div>
+        <label className="block text-xs font-semibold text-slate-500 mb-2">캘린더</label>
+        <div className="grid grid-cols-4 gap-1.5 p-1 bg-slate-100 rounded-xl">
+          {CALENDAR_OPTIONS.map(opt => (
+            <button
+              key={opt.value}
+              onClick={() => setForm(f => ({ ...f, calendarRole: opt.value }))}
+              className={`py-2 rounded-lg text-center transition-all ${
+                form.calendarRole === opt.value ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'
+              }`}
+            >
+              <p className="text-xs font-bold">{opt.label}</p>
+              <p className="text-[10px] font-medium mt-0.5 opacity-70">{opt.desc}</p>
+            </button>
+          ))}
+        </div>
+        {!currentCalOpt.needsTeam && (
+          <p className="mt-1.5 text-[11px] text-slate-400">
+            ※ 이 캘린더는 팀과 무관 — 아래 팀 선택은 시간 슬롯만 결정합니다.
+          </p>
+        )}
+      </div>
 
       {/* 팀 선택 */}
       <div>
