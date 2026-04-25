@@ -13,7 +13,7 @@ import {
   googleEventToSchedule,
 } from '@/lib/calendarApi'
 
-const AUTO_SYNC_INTERVAL = 5 * 60 * 1000 // 5분
+const AUTO_SYNC_INTERVAL = 30 * 1000 // 30초
 
 // 일정 하나를 구글 캘린더에 반영하는 함수
 async function pushScheduleToGoogle(s) {
@@ -61,9 +61,13 @@ function AppInner() {
   const autoExportTimer = useRef(null)
   // 초기 로딩 완료 여부
   const initialLoadDone = useRef(false)
+  // 동시 import 방지 락
+  const importInFlight = useRef(false)
 
-  // ── 가져오기 핵심 로직 ────────────────────────────────────────────────────
-  const doImport = useCallback(async () => {
+  // ── 가져오기 핵심 로직 (silent: 로그 남기지 않음) ────────────────────────
+  const doImport = useCallback(async ({ silent = false } = {}) => {
+    if (importInFlight.current) return false
+    importInFlight.current = true
     try {
       const events = await fetchAllEvents()
       let nextId = Math.max(...state.schedules.map(s => s.id || 0), 0) + 1
@@ -74,12 +78,16 @@ function AppInner() {
       })
       actions.importFromGoogle(mapped)
       actions.setGoogleConnected(true)
-      const now = dayjs()
-      actions.addSyncLog({ time: now.format('HH:mm'), type: 'import', msg: `자동 동기화 완료 (${mapped.length}개)`, ok: true })
+      if (!silent) {
+        const now = dayjs()
+        actions.addSyncLog({ time: now.format('HH:mm'), type: 'import', msg: `동기화 완료 (${mapped.length}개)`, ok: true })
+      }
       return true
     } catch (e) {
       actions.setGoogleConnected(false)
       return false
+    } finally {
+      importInFlight.current = false
     }
   }, [state.schedules, actions])
 
@@ -149,16 +157,31 @@ function AppInner() {
     }
   }, [actions])
 
-  // ── 앱 시작 시 최초 동기화 + 5분 자동 동기화 ─────────────────────────────
+  // ── 앱 시작 시 최초 동기화 + 30초 자동 + 가시성/포커스 트리거 ─────────────
   useEffect(() => {
     // 최초 가져오기
     doImport().then(() => {
       initialLoadDone.current = true
     })
-    // 5분마다 자동 가져오기
-    autoSyncTimer.current = setInterval(() => doImport(), AUTO_SYNC_INTERVAL)
+    // 30초마다 백그라운드 동기화 (탭이 활성일 때만 의미 있음)
+    autoSyncTimer.current = setInterval(() => {
+      if (document.visibilityState === 'visible') {
+        doImport({ silent: true })
+      }
+    }, AUTO_SYNC_INTERVAL)
+
+    // 탭 다시 켜질 때 / 창 포커스 들어올 때 즉시 동기화
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') doImport({ silent: true })
+    }
+    const onFocus = () => doImport({ silent: true })
+    document.addEventListener('visibilitychange', onVisibility)
+    window.addEventListener('focus', onFocus)
+
     return () => {
       if (autoSyncTimer.current) clearInterval(autoSyncTimer.current)
+      document.removeEventListener('visibilitychange', onVisibility)
+      window.removeEventListener('focus', onFocus)
     }
   }, []) // eslint-disable-line
 
