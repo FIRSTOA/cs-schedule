@@ -88,7 +88,8 @@ export default function CalendarPage() {
   }
 
   const handleSave = (formData) => {
-    if (formData.id) actions.updateSchedule(formData)
+    // 편집 저장은 무조건 dirty — 폼의 옛 localDirty(=false from import)에 가리지 않게.
+    if (formData.id) actions.updateSchedule({ ...formData, localDirty: true })
     else actions.addSchedule(formData)
     setIsFormOpen(false)
     setEditItem(null)

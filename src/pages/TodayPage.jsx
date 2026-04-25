@@ -168,7 +168,8 @@ export default function TodayPage() {
 
   const handleSave = (formData) => {
     if (formData.id) {
-      actions.updateSchedule(formData)
+      // 편집 저장은 무조건 dirty — 폼의 옛 localDirty(=false from import)에 가리지 않게.
+      actions.updateSchedule({ ...formData, localDirty: true })
     } else {
       actions.addSchedule({ ...formData, date: formData.date || today })
     }
