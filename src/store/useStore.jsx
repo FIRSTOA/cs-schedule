@@ -1,5 +1,4 @@
 import { createContext, useContext, useReducer, useCallback, useEffect } from 'react'
-import dayjs from 'dayjs'
 
 // ─── 초기 팀원 데이터 ─────────────────────────────────────────────────────────
 const DEFAULT_MEMBERS = {
@@ -16,19 +15,10 @@ const TEAM_LABELS = {
   D: '오후 6시',
 }
 
-function todayStr() { return dayjs().format('YYYY-MM-DD') }
+// 샘플 데이터는 더 이상 시드하지 않음 (구글 캘린더가 단일 진실 공급원).
+// 빈 상태로 시작 → 첫 자동 가져오기 후 구글 캘린더의 일정만 표시됨.
 
-const SAMPLE_SCHEDULES = [
-  { id: 1, team: 'A', member: '김대리', title: '김대리 / 성수 신규 설치', date: todayStr(), start: '09:00', end: '09:30', location: '서울 성동구 성수이로 100', phone: '010-1234-5678', status: '예정', memo: '장비 세팅 및 초기 교육', googleEventId: null, originalDate: null },
-  { id: 2, team: 'A', member: '이주임', title: '이주임 / 강동 A/S', date: todayStr(), start: '09:00', end: '09:30', location: '서울 강동구 천호대로 222', phone: '010-5555-1212', status: '진행중', memo: '출력 오류 점검', googleEventId: null, originalDate: null },
-  { id: 3, team: 'B', member: '박사원', title: '박사원 / 분당 정기 점검', date: todayStr(), start: '12:00', end: '12:30', location: '경기 성남시 분당구 판교역로 50', phone: '010-7777-9999', status: '예정', memo: '월간 순회', googleEventId: null, originalDate: null },
-  { id: 4, team: 'C', member: '최대리', title: '최대리 / 강남 고객사 점검', date: todayStr(), start: '15:00', end: '15:30', location: '서울 강남구 테헤란로 10', phone: '010-1010-1111', status: '예정', memo: '정기 방문', googleEventId: null, originalDate: null },
-  { id: 5, team: 'C', member: '한과장', title: '한과장 / 잠실 긴급 장애', date: todayStr(), start: '15:00', end: '15:30', location: '서울 송파구 석촌호수로 88', phone: '010-2323-9898', status: '특이', memo: '네트워크 연결 불가 - 긴급 대응', googleEventId: null, originalDate: null },
-  { id: 6, team: 'C', member: '오주임', title: '오주임 / 문정 업그레이드', date: todayStr(), start: '15:00', end: '15:30', location: '서울 송파구 법원로 120', phone: '010-4545-7878', status: '완료', memo: '펌웨어 업그레이드 완료', googleEventId: null, originalDate: null },
-  { id: 7, team: 'D', member: '미배정', title: '인천 야간 점검', date: todayStr(), start: '18:00', end: '18:30', location: '인천 연수구 센트럴로 123', phone: '010-3030-2121', status: '예정', memo: '종료 전 체크', googleEventId: null, originalDate: null },
-]
-
-const STORAGE_KEY = 'cs_schedule_state_v2'
+const STORAGE_KEY = 'cs_schedule_state_v3'
 
 function loadFromStorage() {
   try {
@@ -42,26 +32,35 @@ function buildInitialState() {
   const saved = loadFromStorage()
   if (saved) return saved
   return {
-    schedules: SAMPLE_SCHEDULES,
+    schedules: [],
     members: DEFAULT_MEMBERS,
     teamLabels: TEAM_LABELS,
     googleCalendarId: '',
     googleConnected: false,
     syncLogs: [],
-    nextId: SAMPLE_SCHEDULES.length + 1,
+    nextId: 1,
   }
 }
 
 function reducer(state, action) {
   switch (action.type) {
     case 'ADD_SCHEDULE': {
-      const newItem = { ...action.payload, id: state.nextId, originalDate: action.payload.originalDate || null }
+      const newItem = {
+        ...action.payload,
+        id: state.nextId,
+        originalDate: action.payload.originalDate || null,
+        localDirty: true, // 자동 반영 대상 표시
+      }
       return { ...state, schedules: [...state.schedules, newItem], nextId: state.nextId + 1 }
     }
     case 'UPDATE_SCHEDULE': {
       return {
         ...state,
-        schedules: state.schedules.map(s => s.id === action.payload.id ? { ...s, ...action.payload } : s),
+        schedules: state.schedules.map(s =>
+          s.id === action.payload.id
+            ? { ...s, ...action.payload, localDirty: action.payload.localDirty ?? true }
+            : s
+        ),
       }
     }
     case 'DELETE_SCHEDULE': {
@@ -71,7 +70,7 @@ function reducer(state, action) {
       return {
         ...state,
         schedules: state.schedules.map(s =>
-          s.id === action.id ? { ...s, status: action.status } : s
+          s.id === action.id ? { ...s, status: action.status, localDirty: true } : s
         ),
       }
     }
@@ -82,8 +81,18 @@ function reducer(state, action) {
           if (s.id !== action.id) return s
           // originalDate: 처음 미루는 경우에만 저장 (이미 있으면 유지)
           const originalDate = s.originalDate || s.date
-          return { ...s, date: action.date, status: '예정', originalDate }
+          return { ...s, date: action.date, status: '예정', originalDate, localDirty: true }
         }),
+      }
+    }
+    case 'CLEAR_LOCAL_DIRTY': {
+      // 자동 반영이 성공한 일정의 localDirty 플래그 해제
+      const ids = new Set(action.ids)
+      return {
+        ...state,
+        schedules: state.schedules.map(s =>
+          ids.has(s.id) ? { ...s, localDirty: false } : s
+        ),
       }
     }
     case 'ADD_MEMBER': {
@@ -118,49 +127,61 @@ function reducer(state, action) {
 
       // 구글에서 온 이벤트 처리
       const incomingGoogleIds = new Set()
-      let nextId = Math.max(...state.schedules.map(s => s.id), state.nextId - 1) + 1
+      const numericIds = state.schedules.map(s => s.id).filter(id => typeof id === 'number')
+      let nextId = Math.max(0, state.nextId - 1, ...numericIds) + 1
 
       const mergedFromGoogle = incoming.map(ev => {
         incomingGoogleIds.add(ev.googleEventId)
         const existing = existingByGoogleId[ev.googleEventId]
 
         if (existing) {
-          // ★ 핵심: 앱에서 수정한 내용을 모두 보존
-          // 날짜(미루기), 상태, 담당자, 연락처, originalDate 모두 앱 데이터 우선
-          // 메모: 구글 캘린더에 메모가 있으면 구글 우선, 없으면 앱 메모 유지
+          // ★ 핵심: localDirty=true인 일정은 아직 구글에 반영 안 됨 → 앱 데이터 전체 우선
+          // localDirty=false면 구글이 최신본 → 구글 데이터 우선하되 앱 전용 필드만 보존
+          if (existing.localDirty) {
+            // 앱 수정사항 100% 보존, googleEventId만 동기화 보장
+            return { ...existing, googleEventId: ev.googleEventId }
+          }
+          // 구글이 최신: 구글 값 우선, 단 originalDate(앱 전용)는 보존
           return {
-            ...ev,                          // 구글 기본 데이터 (title, location 등)
-            id: existing.id,                // 기존 ID 유지
-            date: existing.date,            // ★ 미룤진 날짜 보존
-            status: existing.status,        // ★ 상태 보존 (완료, 특이 등)
-            member: existing.member,        // 담당자 보존
-            memo: ev.memo || existing.memo, // 구글에 메모 있으면 구글 우선, 없으면 앱 메모 유지
-            phone: existing.phone,          // 연락처 보존
-            originalDate: existing.originalDate, // ★ 원래 날짜 보존
+            ...ev,
+            id: existing.id,
+            originalDate: existing.originalDate ?? null,
+            localDirty: false,
           }
         }
 
         // 새로운 구글 이벤트
-        const newItem = { ...ev, id: nextId }
+        const newItem = { ...ev, id: nextId, localDirty: false }
         nextId++
         return newItem
       })
 
       // 앱에서 직접 추가한 일정 (googleEventId 없는 것) → 그대로 유지
+      // 단 localDirty=false이고 googleEventId 없는 항목은 export 실패 잔여물일 수 있어 그대로 보존
       const localOnly = state.schedules.filter(s => !s.googleEventId)
 
-      // 구글에서 삭제된 이벤트는 앱에서도 제거 (선택적: 일단 유지)
-      // 현재는 구글에서 삭제해도 앱에 남아있음 → 향후 필요시 추가
-      // const deletedFromGoogle = state.schedules.filter(
-      //   s => s.googleEventId && !incomingGoogleIds.has(s.googleEventId)
-      // )
+      // 구글에서 삭제된 일정은 앱에서도 제거.
+      // 단 localDirty=true(아직 미반영)는 보호 — incoming에 없어도 살려둠.
+      const protectedDirty = state.schedules.filter(
+        s => s.googleEventId && s.localDirty && !incomingGoogleIds.has(s.googleEventId)
+      )
 
-      const all = [...localOnly, ...mergedFromGoogle]
+      const all = [...localOnly, ...mergedFromGoogle, ...protectedDirty]
+      // googleEventId 중복 제거 (이론상 없어야 하나 안전장치)
+      const seen = new Set()
+      const deduped = []
+      for (const s of all) {
+        const key = s.googleEventId || `local-${s.id}`
+        if (seen.has(key)) continue
+        seen.add(key)
+        deduped.push(s)
+      }
 
+      const allNumericIds = deduped.map(s => s.id).filter(id => typeof id === 'number')
       return {
         ...state,
-        schedules: all,
-        nextId: Math.max(...all.map(s => s.id), state.nextId) + 1,
+        schedules: deduped,
+        nextId: Math.max(0, state.nextId, ...allNumericIds) + 1,
       }
     }
 
@@ -197,6 +218,7 @@ export function StoreProvider({ children }) {
     setGoogleCalendarId: useCallback((id) => dispatch({ type: 'SET_GOOGLE_CALENDAR_ID', id }), []),
     setGoogleConnected: useCallback((connected) => dispatch({ type: 'SET_GOOGLE_CONNECTED', connected }), []),
     importFromGoogle: useCallback((events) => dispatch({ type: 'IMPORT_FROM_GOOGLE', events }), []),
+    clearLocalDirty: useCallback((ids) => dispatch({ type: 'CLEAR_LOCAL_DIRTY', ids }), []),
     addSyncLog: useCallback((log) => dispatch({ type: 'ADD_SYNC_LOG', log }), []),
     reset: useCallback(() => {
       localStorage.removeItem(STORAGE_KEY)

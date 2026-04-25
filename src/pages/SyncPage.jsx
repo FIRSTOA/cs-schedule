@@ -9,7 +9,7 @@ import {
   googleEventToSchedule,
 } from '@/lib/calendarApi'
 
-const AUTO_SYNC_INTERVAL = 5 * 60 * 1000 // 5분
+const AUTO_SYNC_INTERVAL = 30 * 1000 // 30초
 
 export default function SyncPage() {
   const { state, actions } = useStore()
@@ -168,7 +168,7 @@ export default function SyncPage() {
             <div className="flex items-center gap-1.5 bg-white/10 px-3 py-1.5 rounded-xl">
               <Clock size={12} className="text-emerald-400" />
               <span className="text-xs text-emerald-300 tabular-nums">
-                {formatCountdown(nextSyncIn)} 후 자동 갱신
+                {nextSyncIn}초 후 자동 갱신
               </span>
             </div>
           )}
@@ -216,10 +216,13 @@ export default function SyncPage() {
             </div>
           )}
 
-          {/* 자동 반영 안내 */}
+          {/* 자동 동기화 안내 */}
           <div className="mt-3 bg-emerald-50 rounded-xl p-3">
-            <p className="text-xs text-emerald-700 font-medium">✓ 자동 반영 활성화</p>
-            <p className="text-xs text-emerald-600 mt-0.5">앱에서 수정하면 3초 후 구글 캘린더에 자동으로 반영됩니다.</p>
+            <p className="text-xs text-emerald-700 font-medium">✓ 실시간 자동 동기화</p>
+            <p className="text-xs text-emerald-600 mt-0.5">
+              앱 수정 → 3초 후 구글 반영<br />
+              구글 변경 → 30초마다 + 앱 다시 켤 때 즉시 반영
+            </p>
           </div>
         </div>
 

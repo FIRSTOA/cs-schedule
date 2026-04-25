@@ -22,6 +22,11 @@ export default function ScheduleCard({ item, onTap, onComplete, onPostpone, onIs
     if (item.phone) window.location.href = `tel:${item.phone.replace(/-/g, '')}`
   }
 
+  // 제목에 이미 "담당자 / " 접두사가 있으면 제거 (담당자는 별도 표시)
+  const cleanTitle = item.member && item.member !== '미배정' && item.title?.startsWith(`${item.member} / `)
+    ? item.title.slice(item.member.length + 3)
+    : item.title
+
   return (
     <>
       <motion.div
@@ -53,7 +58,10 @@ export default function ScheduleCard({ item, onTap, onComplete, onPostpone, onIs
               <p className={`text-[15px] font-bold leading-snug ${
                 isDone ? 'line-through text-slate-400' : 'text-slate-900'
               }`}>
-                {item.title}
+                {item.member && item.member !== '미배정' && (
+                  <span className="text-blue-700 mr-1">{item.member}</span>
+                )}
+                {cleanTitle}
               </p>
             </div>
             <div className="flex items-center gap-1.5 shrink-0 mt-0.5">

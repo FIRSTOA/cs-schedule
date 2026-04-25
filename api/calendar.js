@@ -26,15 +26,34 @@ export default async function handler(req, res) {
     const calendarId = getCalendarId()
     const { action } = req.query
 
-    // ── 전체 일정 가져오기 ──────────────────────────────────────────────────
+    // ── 전체 일정 가져오기 (페이지네이션 + 시간범위) ────────────────────────
     if (req.method === 'GET' && action === 'list') {
-      const response = await calendar.events.list({
-        calendarId,
-        maxResults: 2500,
-        singleEvents: true,
-        orderBy: 'startTime',
-      })
-      return res.status(200).json({ events: response.data.items || [] })
+      // 과거 6개월 ~ 미래 12개월. 필요시 query로 override 가능.
+      const now = new Date()
+      const defaultMin = new Date(now)
+      defaultMin.setMonth(defaultMin.getMonth() - 6)
+      const defaultMax = new Date(now)
+      defaultMax.setMonth(defaultMax.getMonth() + 12)
+      const timeMin = req.query.timeMin || defaultMin.toISOString()
+      const timeMax = req.query.timeMax || defaultMax.toISOString()
+
+      let allItems = []
+      let pageToken = undefined
+      do {
+        const response = await calendar.events.list({
+          calendarId,
+          timeMin,
+          timeMax,
+          maxResults: 2500,
+          singleEvents: true,
+          orderBy: 'startTime',
+          showDeleted: false,
+          ...(pageToken ? { pageToken } : {}),
+        })
+        allItems = allItems.concat(response.data.items || [])
+        pageToken = response.data.nextPageToken
+      } while (pageToken)
+      return res.status(200).json({ events: allItems })
     }
 
     // ── 일정 생성 ──────────────────────────────────────────────────────────
