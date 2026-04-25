@@ -343,9 +343,9 @@ export default function SettingsPage() {
                   </p>
                   <div className="bg-white rounded-lg p-2.5 flex items-center justify-between gap-2">
                     <code className="text-xs text-slate-700 break-all flex-1">
-                      cs-schedule-sync@gen-lang-client-0911669357.iam.gserviceaccount.com
+                      cs-schedule-bot@gen-lang-client-0911669357.iam.gserviceaccount.com
                     </code>
-                    <CopyButton text="cs-schedule-sync@gen-lang-client-0911669357.iam.gserviceaccount.com" />
+                    <CopyButton text="cs-schedule-bot@gen-lang-client-0911669357.iam.gserviceaccount.com" />
                   </div>
                 </div>
 
