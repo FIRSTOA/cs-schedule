@@ -115,11 +115,13 @@ const TEAM_TIME = {
 }
 
 function detectTeamByTime(timeStr) {
-  const h = parseInt(timeStr.slice(0, 2), 10)
-  if (h >= 6  && h < 11) return 'A'
-  if (h >= 11 && h < 14) return 'B'
-  if (h >= 14 && h < 17) return 'C'
-  if (h >= 17 && h < 22) return 'D'
+  // 회사 룰: 9:00~9:30=A, 12:00~12:30=B, 15:00~15:30=C, 18:00~18:30=D
+  const [h, m] = timeStr.split(':').map(n => parseInt(n, 10))
+  const minutes = h * 60 + (m || 0)
+  if (minutes >= 9  * 60 && minutes <= 9  * 60 + 30) return 'A'
+  if (minutes >= 12 * 60 && minutes <= 12 * 60 + 30) return 'B'
+  if (minutes >= 15 * 60 && minutes <= 15 * 60 + 30) return 'C'
+  if (minutes >= 18 * 60 && minutes <= 18 * 60 + 30) return 'D'
   return 'A'
 }
 
