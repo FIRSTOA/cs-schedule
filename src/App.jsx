@@ -10,6 +10,7 @@ import {
   fetchAllEvents,
   createEvent,
   updateEvent,
+  moveEvent,
   googleEventToSchedule,
   fetchAppConfig,
   saveAppConfig,
@@ -59,19 +60,19 @@ function buildEventBody(s) {
   }
 }
 
-// 일정의 출처 캘린더 ID 결정 — calendarId 직접 들고 있으면 그것, 없으면 등록부에서 키로 해석.
-function resolveScheduleCalendarId(schedule, calendars) {
-  if (schedule.calendarId) return schedule.calendarId
+// 반영 대상 캘린더 ID 결정 — 사용자가 폼에서 고른 calendarKey가 가장 최신 의도라 우선.
+// (calendarId는 import 시점의 "구글에 현재 있는 위치"라서 캘린더 변경 시 옛 값일 수 있음)
+function resolveTargetCalendarId(schedule, calendars) {
   if (schedule.calendarKey) {
     const meta = resolveCalendar(calendars, schedule.calendarKey)
-    if (meta) return meta.id
+    if (meta?.id) return meta.id
   }
-  // fallback: teamAS:{team}로 추정
+  if (schedule.calendarId) return schedule.calendarId
   if (schedule.team) {
     const meta = resolveCalendar(calendars, `teamAS:${schedule.team}`)
     if (meta) return meta.id
   }
-  return null // 백엔드 기본값 사용
+  return null
 }
 
 function AppInner() {
@@ -183,11 +184,33 @@ function AppInner() {
     for (const s of targets) {
       try {
         const eventBody = buildEventBody(s)
-        const targetCalendarId = resolveScheduleCalendarId(s, state.calendars)
-        if (s.googleEventId) {
+        const targetCalendarId = resolveTargetCalendarId(s, state.calendars)
+        const currentCalendarId = s.calendarId // 구글에 현재 들어있는 위치
+        const needsMove =
+          s.googleEventId &&
+          currentCalendarId &&
+          targetCalendarId &&
+          currentCalendarId !== targetCalendarId
+
+        if (needsMove) {
+          // 캘린더 카테고리 변경 — 옛 캘린더에서 지우고 새 캘린더에 다시 만든다.
+          // 새 googleEventId가 발급되니 로컬도 그걸로 갱신.
+          const moveResult = await moveEvent({
+            fromCalendarId: currentCalendarId,
+            toCalendarId: targetCalendarId,
+            eventId: s.googleEventId,
+            eventBody,
+          })
+          actions.updateSchedule({
+            id: s.id,
+            googleEventId: moveResult.event?.id || s.googleEventId,
+            calendarId: targetCalendarId,
+            originalDescription: eventBody.description,
+            memo: '',
+            localDirty: false,
+          })
+        } else if (s.googleEventId) {
           await updateEvent(s.googleEventId, eventBody, targetCalendarId)
-          // 로컬을 방금 보낸 결과로 맞춰 둠: originalDescription을 합쳐진 결과로 갱신하고
-          // memo 입력칸은 비워서 같은 메모가 다음 저장 때 또 붙는 일을 막음.
           actions.updateSchedule({
             id: s.id,
             originalDescription: eventBody.description,
