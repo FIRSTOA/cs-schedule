@@ -137,7 +137,19 @@ function AppInner() {
       if (!silent) {
         const now = dayjs()
         const errNote = errors && errors.length > 0 ? ` (캘린더 ${errors.length}개 실패)` : ''
-        actions.addSyncLog({ time: now.format('HH:mm'), type: 'import', msg: `동기화 완료 (${mapped.length}개)${errNote}`, ok: errors.length === 0 })
+        actions.addSyncLog({ time: now.format('HH:mm'), type: 'import', msg: `동기화 완료 (${mapped.length}개)${errNote}`, ok: !errors || errors.length === 0 })
+        // 실패 상세 — 어떤 캘린더가 막혔는지 확인하기 쉽게
+        if (errors && errors.length > 0) {
+          errors.forEach(err => {
+            const calName = idToKey[err.calendarId]?.meta?.label || err.calendarId.slice(0, 24) + '…'
+            actions.addSyncLog({
+              time: dayjs().format('HH:mm'),
+              type: 'import',
+              msg: `실패: ${calName} → ${err.error}`,
+              ok: false,
+            })
+          })
+        }
       }
       return true
     } catch (e) {
