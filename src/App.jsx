@@ -182,6 +182,7 @@ function AppInner() {
     let successCount = 0
     let failCount = 0
     const failReasons = []
+    const actionLogs = []
     for (const s of targets) {
       try {
         const eventBody = buildEventBody(s)
@@ -193,9 +194,21 @@ function AppInner() {
           targetCalendarId &&
           currentCalendarId !== targetCalendarId
 
+        const fromMeta = currentCalendarId
+          ? Object.values(state.calendars || {}).flatMap(v =>
+              v?.id ? [v] : Object.values(v || {})
+            ).find(c => c?.id === currentCalendarId)
+          : null
+        const toMeta = targetCalendarId
+          ? Object.values(state.calendars || {}).flatMap(v =>
+              v?.id ? [v] : Object.values(v || {})
+            ).find(c => c?.id === targetCalendarId)
+          : null
+        const fromLabel = fromMeta?.label || (currentCalendarId ? currentCalendarId.slice(0, 12) + '…' : '없음')
+        const toLabel = toMeta?.label || (targetCalendarId ? targetCalendarId.slice(0, 12) + '…' : '없음')
+
         if (needsMove) {
-          // 캘린더 카테고리 변경 — 옛 캘린더에서 지우고 새 캘린더에 다시 만든다.
-          // 새 googleEventId가 발급되니 로컬도 그걸로 갱신.
+          actionLogs.push(`이동: ${s.title} (${fromLabel} → ${toLabel})`)
           const moveResult = await moveEvent({
             fromCalendarId: currentCalendarId,
             toCalendarId: targetCalendarId,
@@ -211,6 +224,7 @@ function AppInner() {
             localDirty: false,
           })
         } else if (s.googleEventId) {
+          actionLogs.push(`수정: ${s.title} (${fromLabel})`)
           await updateEvent(s.googleEventId, eventBody, targetCalendarId)
           actions.updateSchedule({
             id: s.id,
@@ -219,6 +233,7 @@ function AppInner() {
             localDirty: false,
           })
         } else {
+          actionLogs.push(`생성: ${s.title} (${toLabel})`)
           const created = await createEvent(eventBody, targetCalendarId)
           actions.updateSchedule({
             ...s,
@@ -246,7 +261,15 @@ function AppInner() {
         msg: baseMsg,
         ok: failCount === 0,
       })
-      // 실패 사유는 별도 로그로 — 동기화 기록에서 어디가 막히는지 바로 보이게.
+      // 동작 내역 (어디로 어떻게 갔는지) 로그로 — 진단용.
+      actionLogs.forEach(line => {
+        actions.addSyncLog({
+          time: dayjs().format('HH:mm'),
+          type: 'export',
+          msg: line,
+          ok: true,
+        })
+      })
       failReasons.forEach(reason => {
         actions.addSyncLog({
           time: dayjs().format('HH:mm'),
