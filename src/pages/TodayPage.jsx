@@ -20,6 +20,23 @@ const TEAMS = [
 
 const STATUS_FILTERS = ['전체', '예정', '진행중', '완료', '익일', '특이']
 
+// 캘린더 카테고리 — 메인 화면에 보일 3종.
+// 점검/마감(teamReport)은 메인에 안 나옴 (별도 진입점에서 관리).
+const CATEGORY_FILTERS = [
+  { id: 'all',  label: '전체',     roles: ['pool', 'teamAS', 'ops'] },
+  { id: 'pool', label: '익일통합', roles: ['pool'] },
+  { id: 'as',   label: 'A/S',      roles: ['teamAS'] },
+  { id: 'ops',  label: '납품',     roles: ['ops'] },
+]
+
+// 카테고리 배지 색상
+const CATEGORY_BADGE = {
+  pool:       { label: '익일통합', cls: 'bg-amber-100 text-amber-700 border-amber-200' },
+  teamAS:     { label: 'A/S',      cls: 'bg-blue-100 text-blue-700 border-blue-200' },
+  ops:        { label: '납품',     cls: 'bg-purple-100 text-purple-700 border-purple-200' },
+  teamReport: { label: '점검',     cls: 'bg-slate-100 text-slate-600 border-slate-200' },
+}
+
 // 다음 평일 구하기 (토=6, 일=0 건너뜀)
 function nextWeekday(dateStr) {
   let d = dayjs(dateStr).add(1, 'day')
@@ -36,10 +53,28 @@ export default function TodayPage() {
 
   const [activeTeam, setActiveTeam] = useState('A')
   const [statusFilter, setStatusFilter] = useState('전체')
+  const [categoryFilter, setCategoryFilter] = useState('all') // all | pool | as | ops
   const [search, setSearch] = useState('')
   const [editItem, setEditItem] = useState(null)
   const [isFormOpen, setIsFormOpen] = useState(false)
   const [postponeItem, setPostponeItem] = useState(null)
+
+  // 카테고리 필터에 해당하는 role 집합
+  const allowedRoles = useMemo(() => {
+    const cat = CATEGORY_FILTERS.find(c => c.id === categoryFilter)
+    return new Set(cat ? cat.roles : ['pool', 'teamAS', 'ops'])
+  }, [categoryFilter])
+
+  // 일정이 현재 화면에 표시 대상인지 — 메인 화면에서는 점검/마감 항상 제외.
+  // pool/ops는 팀 무관 (전사). teamAS는 선택된 팀만.
+  const matchesTeamAndCategory = (s) => {
+    const role = s.calendarRole || (s.calendarKey?.split(':')[0]) || (s.team ? 'teamAS' : null)
+    if (!role) return false // 메타가 없으면 메인 화면에서 제외 (잔재 가능성)
+    if (role === 'teamReport') return false
+    if (!allowedRoles.has(role)) return false
+    if (role === 'teamAS') return s.team === activeTeam
+    return true // pool, ops는 팀 무관
+  }
 
   // ── 일정 분류 ──────────────────────────────────────────────────────────────
   // "오늘 날짜였다가 미뤄진 일정" = 원래 오늘이었으나 다른 날짜로 변경된 것
@@ -54,22 +89,18 @@ export default function TodayPage() {
 
   const displaySchedules = useMemo(() => {
     return state.schedules
+      .filter(matchesTeamAndCategory)
       .filter(s => {
-        if (s.team !== activeTeam) return false
-
         const isToday = s.date === today
         const isNextWorkday = s.date === nextWorkday
-        // 미뤄진 일정: originalDate가 오늘인 것
         const isPostponedFromToday = s.originalDate === today
 
         if (statusFilter === '전체') {
           return isToday || isNextWorkday || isPostponedFromToday
         }
         if (statusFilter === '익일') {
-          // 익일 탭: 다음 평일 일정 + 오늘에서 미뤄진 일정(날짜 무관)
           return isNextWorkday || isPostponedFromToday
         }
-        // 나머지 상태 필터: 오늘 일정만
         return isToday && s.status === statusFilter
       })
       .filter(s => {
@@ -78,27 +109,50 @@ export default function TodayPage() {
         return (s.title + s.location + s.member + (s.memo || '')).toLowerCase().includes(q)
       })
       .sort((a, b) => {
-        // 오늘 → 다음 평일 → 그 이후 순
         const aOrder = a.date === today ? 0 : a.date === nextWorkday ? 1 : 2
         const bOrder = b.date === today ? 0 : b.date === nextWorkday ? 1 : 2
         if (aOrder !== bOrder) return aOrder - bOrder
-        return a.start.localeCompare(b.start)
+        return (a.start || '').localeCompare(b.start || '')
       })
-  }, [state.schedules, today, nextWorkday, activeTeam, statusFilter, search])
+  }, [state.schedules, today, nextWorkday, activeTeam, statusFilter, categoryFilter, search, allowedRoles]) // eslint-disable-line
 
-  // ── 통계 (오늘 기준) ──────────────────────────────────────────────────────
+  // ── 통계 (오늘 기준 — 카테고리 필터 무관, 우리 팀 작업 + 풀 + 운영 모두 포함) ───
   const stats = useMemo(() => {
-    const todayItems = state.schedules.filter(s => s.date === today && s.team === activeTeam)
-    const nextItems = state.schedules.filter(s => s.date === nextWorkday && s.team === activeTeam)
-    const postponedItems = state.schedules.filter(s => s.originalDate === today && s.team === activeTeam)
+    const inScope = state.schedules.filter(s => {
+      const role = s.calendarRole || (s.calendarKey?.split(':')[0]) || (s.team ? 'teamAS' : null)
+      if (!role || role === 'teamReport') return false
+      if (role === 'teamAS') return s.team === activeTeam
+      return true
+    })
+    const todayItems = inScope.filter(s => s.date === today)
+    const nextItems = inScope.filter(s => s.date === nextWorkday)
+    const postponedItems = inScope.filter(s => s.originalDate === today)
     return {
       total: todayItems.length,
       done: todayItems.filter(s => s.status === '완료').length,
       inProgress: todayItems.filter(s => s.status === '진행중').length,
       issue: todayItems.filter(s => s.status === '특이').length,
-      // 익일 카운트: 다음 평일 일정 + 오늘에서 미뤄진 일정
       nextDay: nextItems.length + postponedItems.length,
     }
+  }, [state.schedules, today, nextWorkday, activeTeam])
+
+  // ── 카테고리별 카운트 (chip 옆에 표시) ────────────────────────────────────
+  const categoryCounts = useMemo(() => {
+    const counts = { all: 0, pool: 0, as: 0, ops: 0 }
+    state.schedules.forEach(s => {
+      const role = s.calendarRole || (s.calendarKey?.split(':')[0]) || (s.team ? 'teamAS' : null)
+      if (!role || role === 'teamReport') return
+      if (role === 'teamAS' && s.team !== activeTeam) return
+      const isToday = s.date === today
+      const isNextWorkday = s.date === nextWorkday
+      const isPostponed = s.originalDate === today
+      if (!(isToday || isNextWorkday || isPostponed)) return
+      counts.all++
+      if (role === 'pool') counts.pool++
+      else if (role === 'teamAS') counts.as++
+      else if (role === 'ops') counts.ops++
+    })
+    return counts
   }, [state.schedules, today, nextWorkday, activeTeam])
 
   const handleComplete = (id) => actions.setStatus(id, '완료')
@@ -131,20 +185,26 @@ export default function TodayPage() {
 
   const progressPct = stats.total > 0 ? Math.round((stats.done / stats.total) * 100) : 0
 
-  // 필터별 카운트
+  // 필터별 카운트 — 메인 화면 범위(우리 팀 A/S + 풀 + 운영)에서 계산
   const filterCount = (f) => {
-    const teamItems = state.schedules.filter(s => s.team === activeTeam)
+    const inScope = state.schedules.filter(s => {
+      const role = s.calendarRole || (s.calendarKey?.split(':')[0]) || (s.team ? 'teamAS' : null)
+      if (!role || role === 'teamReport') return false
+      if (role === 'teamAS' && s.team !== activeTeam) return false
+      // 카테고리 필터도 반영
+      return allowedRoles.has(role)
+    })
     if (f === '전체') {
-      return teamItems.filter(s =>
+      return inScope.filter(s =>
         s.date === today || s.date === nextWorkday || s.originalDate === today
       ).length
     }
     if (f === '익일') {
-      return teamItems.filter(s =>
+      return inScope.filter(s =>
         s.date === nextWorkday || s.originalDate === today
       ).length
     }
-    return teamItems.filter(s => s.date === today && s.status === f).length
+    return inScope.filter(s => s.date === today && s.status === f).length
   }
 
   // 날짜 그룹 라벨
@@ -225,7 +285,7 @@ export default function TodayPage() {
         </div>
       </div>
 
-      {/* ── 검색 + 상태 필터 ── */}
+      {/* ── 검색 + 카테고리 + 상태 필터 ── */}
       <div className="bg-white px-4 py-3 space-y-2.5 shrink-0 border-b border-slate-100">
         <div className="relative">
           <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
@@ -240,6 +300,29 @@ export default function TodayPage() {
               <X size={14} />
             </button>
           )}
+        </div>
+
+        {/* 카테고리 chips — 익일통합/A/S/납품 분류 */}
+        <div className="flex gap-1.5 overflow-x-auto pb-0.5">
+          {CATEGORY_FILTERS.map(c => {
+            const count = categoryCounts[c.id] ?? 0
+            const active = categoryFilter === c.id
+            const accentCls = active
+              ? c.id === 'pool' ? 'bg-amber-500 text-white'
+              : c.id === 'as'   ? 'bg-blue-600 text-white'
+              : c.id === 'ops'  ? 'bg-purple-600 text-white'
+              : 'bg-slate-900 text-white'
+              : 'bg-slate-100 text-slate-500'
+            return (
+              <button
+                key={c.id}
+                onClick={() => setCategoryFilter(c.id)}
+                className={`shrink-0 h-7 px-3 rounded-full text-xs font-semibold transition-all ${accentCls}`}
+              >
+                {c.label}{count > 0 && <span className="ml-0.5 opacity-70">{count}</span>}
+              </button>
+            )
+          })}
         </div>
 
         <div className="flex gap-1.5 overflow-x-auto pb-0.5">

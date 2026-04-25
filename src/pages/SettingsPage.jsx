@@ -1,7 +1,15 @@
 import { useState } from 'react'
-import { Plus, X, ChevronDown, ChevronUp, Info, Cloud, CloudOff, Copy, Check, Users } from 'lucide-react'
+import { Plus, X, ChevronDown, ChevronUp, Info, Cloud, CloudOff, Copy, Check, Users, CalendarRange } from 'lucide-react'
 import dayjs from 'dayjs'
 import { useStore } from '@/store/useStore.jsx'
+
+// 캘린더 등록부 표시용 메타
+const CALENDAR_GROUPS = [
+  { type: 'single', key: 'pool', label: '익일통합 AS', desc: '접수 풀 — 모든 팀이 공유', tagCls: 'bg-amber-100 text-amber-700' },
+  { type: 'team', key: 'teamAS', label: '팀별 A/S', desc: '팀별 활성 작업', tagCls: 'bg-blue-100 text-blue-700' },
+  { type: 'team', key: 'teamReport', label: '팀별 점검/마감', desc: '메인 화면 표시 X · 별도 관리', tagCls: 'bg-slate-200 text-slate-600' },
+  { type: 'single', key: 'ops', label: '납품/교체/철수/휴가/교육', desc: '전사 운영 일정', tagCls: 'bg-purple-100 text-purple-700' },
+]
 
 const TEAM_DEFS = [
   { id: 'A', label: 'A팀' },
@@ -210,6 +218,63 @@ export default function SettingsPage() {
                 onChangeLabel={actions.setTeamLabel}
               />
             ))}
+          </div>
+        </section>
+
+        {/* ── 캘린더 등록부 ── */}
+        <section>
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-xs font-bold text-slate-500 uppercase tracking-wider">연동된 캘린더</h2>
+            <span className="text-[10px] text-slate-400 flex items-center gap-1">
+              <CalendarRange size={10} /> 10개
+            </span>
+          </div>
+          <div className="bg-blue-50 rounded-xl px-3 py-2.5 mb-3 flex items-start gap-2">
+            <Info size={13} className="text-blue-500 mt-0.5 shrink-0" />
+            <p className="text-[11px] text-blue-700 leading-relaxed">
+              앱이 연동 중인 구글 캘린더 목록입니다. <strong>점검/마감</strong>은 메인 화면에 표시되지 않지만 등록은 가능합니다.
+            </p>
+          </div>
+          <div className="space-y-2">
+            {CALENDAR_GROUPS.map(g => {
+              const items = g.type === 'team'
+                ? ['A', 'B', 'C', 'D'].map(t => ({
+                    sub: t,
+                    label: state.calendars?.[g.key]?.[t]?.label || `${g.label} ${t}`,
+                    id: state.calendars?.[g.key]?.[t]?.id,
+                  })).filter(x => x.id)
+                : (state.calendars?.[g.key]?.id
+                    ? [{ label: state.calendars[g.key].label || g.label, id: state.calendars[g.key].id }]
+                    : [])
+              return (
+                <div key={g.key} className="bg-white rounded-2xl p-4 shadow-sm border border-slate-100">
+                  <div className="flex items-center justify-between mb-2">
+                    <div>
+                      <p className="text-sm font-bold text-slate-900">{g.label}</p>
+                      <p className="text-[11px] text-slate-400 mt-0.5">{g.desc}</p>
+                    </div>
+                    <span className={`text-[10px] font-semibold px-2 py-0.5 rounded ${g.tagCls}`}>
+                      {items.length}개
+                    </span>
+                  </div>
+                  <div className="space-y-1.5 mt-2">
+                    {items.length === 0 && (
+                      <p className="text-xs text-slate-400 italic">등록된 캘린더가 없습니다.</p>
+                    )}
+                    {items.map(it => (
+                      <div key={it.id} className="flex items-center gap-2 text-[11px]">
+                        {it.sub && (
+                          <span className="w-5 h-5 rounded bg-slate-900 text-white text-[10px] font-bold flex items-center justify-center shrink-0">
+                            {it.sub}
+                          </span>
+                        )}
+                        <span className="text-slate-700 font-medium truncate flex-1">{it.label}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )
+            })}
           </div>
         </section>
 

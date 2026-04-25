@@ -5,20 +5,28 @@
 
 const BASE = '/api/calendar'
 
-// ── 전체 일정 가져오기 ──────────────────────────────────────────────────────
-export async function fetchAllEvents() {
-  const res = await fetch(`${BASE}?action=list`)
+// ── 전체 일정 가져오기 (멀티 캘린더) ────────────────────────────────────────
+// calendarIds: 문자열 배열. 각 이벤트에는 _calendarId 메타가 붙어옴.
+// 일부 캘린더 fetch 실패해도 다른 건 진행 (errors 배열에 보고됨).
+export async function fetchAllEvents(calendarIds) {
+  const params = new URLSearchParams()
+  if (Array.isArray(calendarIds) && calendarIds.length > 0) {
+    params.set('calendarIds', calendarIds.join(','))
+  }
+  const res = await fetch(`${BASE}?action=list&${params.toString()}`)
   if (!res.ok) {
     const err = await res.json().catch(() => ({}))
     throw new Error(err.error || `HTTP ${res.status}`)
   }
   const data = await res.json()
-  return data.events || []
+  return { events: data.events || [], errors: data.errors || [] }
 }
 
 // ── 일정 생성 ──────────────────────────────────────────────────────────────
-export async function createEvent(eventBody) {
-  const res = await fetch(`${BASE}?action=create`, {
+export async function createEvent(eventBody, calendarId) {
+  const params = new URLSearchParams({ action: 'create' })
+  if (calendarId) params.set('calendarId', calendarId)
+  const res = await fetch(`${BASE}?${params.toString()}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(eventBody),
@@ -31,8 +39,10 @@ export async function createEvent(eventBody) {
 }
 
 // ── 일정 수정 ──────────────────────────────────────────────────────────────
-export async function updateEvent(eventId, eventBody) {
-  const res = await fetch(`${BASE}?action=update`, {
+export async function updateEvent(eventId, eventBody, calendarId) {
+  const params = new URLSearchParams({ action: 'update' })
+  if (calendarId) params.set('calendarId', calendarId)
+  const res = await fetch(`${BASE}?${params.toString()}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ eventId, ...eventBody }),
@@ -45,15 +55,30 @@ export async function updateEvent(eventId, eventBody) {
 }
 
 // ── 일정 삭제 ──────────────────────────────────────────────────────────────
-export async function deleteEvent(eventId) {
-  const res = await fetch(`${BASE}?action=delete&eventId=${encodeURIComponent(eventId)}`, {
-    method: 'DELETE',
-  })
+export async function deleteEvent(eventId, calendarId) {
+  const params = new URLSearchParams({ action: 'delete', eventId })
+  if (calendarId) params.set('calendarId', calendarId)
+  const res = await fetch(`${BASE}?${params.toString()}`, { method: 'DELETE' })
   if (!res.ok) {
     const err = await res.json().catch(() => ({}))
     throw new Error(err.error || `HTTP ${res.status}`)
   }
   return true
+}
+
+// ── 일정 이동 (출처 → 대상 캘린더) ──────────────────────────────────────────
+// 백엔드: 대상에 새로 만들고 출처에서 삭제. 새 googleEventId가 반환됨.
+export async function moveEvent({ fromCalendarId, toCalendarId, eventId, eventBody }) {
+  const res = await fetch(`${BASE}?action=move`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ fromCalendarId, toCalendarId, eventId, eventBody }),
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    throw new Error(err.error || `HTTP ${res.status}`)
+  }
+  return await res.json() // { event, deleted, deleteError }
 }
 
 // ── 앱 설정 가져오기 (모든 사용자 공유) ────────────────────────────────────
@@ -99,8 +124,12 @@ function detectTeamByTime(timeStr) {
 }
 
 // ── 구글 이벤트 → 앱 스케줄 변환 ──────────────────────────────────────────
-// 앱이 기대하는 필드: team, member, title, date, start, end, location, phone, status, memo
-export function googleEventToSchedule(event) {
+// options:
+//   calKey  — 'pool' | 'teamAS:A' | 'teamReport:B' | 'ops' (출처 캘린더 키)
+//   calMeta — { id, label, role, team }
+// 출처 캘린더가 있으면 그 정보를 우선해서 team/role 결정. 없으면 옛 방식(description/시간) fallback.
+export function googleEventToSchedule(event, options = {}) {
+  const { calKey, calMeta } = options
   const startRaw = event.start?.dateTime || event.start?.date || ''
   const endRaw = event.end?.dateTime || event.end?.date || ''
 
@@ -109,7 +138,6 @@ export function googleEventToSchedule(event) {
   let rawStart = '09:00'
   if (startRaw.includes('T')) {
     const d = new Date(startRaw)
-    // KST 변환 (UTC+9)
     const kst = new Date(d.getTime() + 9 * 60 * 60 * 1000)
     date = kst.toISOString().slice(0, 10)
     rawStart = kst.toISOString().slice(11, 16)
@@ -120,9 +148,17 @@ export function googleEventToSchedule(event) {
   // description 파싱
   const desc = event.description || ''
 
-  // 팀 결정: description의 "팀: X팀" 우선, 없으면 시간 기반
-  const teamMatch = desc.match(/팀:\s*([ABCD])팀/)
-  const team = teamMatch ? teamMatch[1] : detectTeamByTime(rawStart)
+  // 팀 결정 우선순위:
+  //   1) 캘린더 출처가 teamAS:X / teamReport:X → 그 X
+  //   2) description의 "팀: X팀"
+  //   3) 시간대 기반 추정 (단일 캘린더 시절 fallback)
+  let team = null
+  if (calMeta?.team) {
+    team = calMeta.team
+  } else {
+    const teamMatch = desc.match(/팀:\s*([ABCD])팀/)
+    team = teamMatch ? teamMatch[1] : detectTeamByTime(rawStart)
+  }
   const fixedTime = TEAM_TIME[team] || TEAM_TIME['A']
 
   // 제목 파싱: "담당자 / 업무내용" 형식 (앞의 상태 태그 제거)
@@ -177,12 +213,16 @@ export function googleEventToSchedule(event) {
     member,
     title: cleanTitle,
     date,
-    start: fixedTime.start,        // 앱이 기대하는 필드명: start
-    end: fixedTime.end,            // 앱이 기대하는 필드명: end
-    location: event.location || '', // 앱이 기대하는 필드명: location
+    start: fixedTime.start,
+    end: fixedTime.end,
+    location: event.location || '',
     phone,
     status,
     memo,
     originalDate: null,
+    // 멀티 캘린더 메타
+    calendarKey: calKey || null,           // 'pool' | 'teamAS:A' | 'teamReport:A' | 'ops' | null
+    calendarId: event._calendarId || calMeta?.id || null,
+    calendarRole: calMeta?.role || null,   // 'pool' | 'teamAS' | 'teamReport' | 'ops'
   }
 }
