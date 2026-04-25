@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { RefreshCw, Download, Upload, CheckCircle, AlertTriangle, CalendarDays, Clock, Wifi, WifiOff } from 'lucide-react'
 import dayjs from 'dayjs'
-import { useStore } from '@/store/useStore.jsx'
+import { useStore, getReadCalendarKeys, resolveCalendar } from '@/store/useStore.jsx'
 import {
   fetchAllEvents,
   createEvent,
@@ -45,15 +45,26 @@ export default function SyncPage() {
     }
   }, []) // eslint-disable-line
 
-  // ── 수동 가져오기 ─────────────────────────────────────────────────────────
+  // ── 수동 가져오기 (멀티 캘린더) ───────────────────────────────────────────
   const handleImport = async () => {
     setLoading(true)
     setSyncError('')
     try {
-      const events = await fetchAllEvents()
+      const readKeys = getReadCalendarKeys()
+      const idToKey = {}
+      const calendarIds = []
+      for (const key of readKeys) {
+        const meta = resolveCalendar(state.calendars, key)
+        if (meta?.id) {
+          idToKey[meta.id] = { key, meta }
+          calendarIds.push(meta.id)
+        }
+      }
+      const { events, errors } = await fetchAllEvents(calendarIds)
       let nextId = Math.max(...state.schedules.map(s => s.id || 0), 0) + 1
       const mapped = events.map(ev => {
-        const s = googleEventToSchedule(ev)
+        const ctx = idToKey[ev._calendarId] || {}
+        const s = googleEventToSchedule(ev, { calKey: ctx.key, calMeta: ctx.meta })
         s.id = s.id || nextId++
         return s
       })
@@ -61,7 +72,25 @@ export default function SyncPage() {
       actions.setGoogleConnected(true)
       const now = dayjs()
       startCountdown()
-      actions.addSyncLog({ time: now.format('HH:mm'), type: 'import', msg: `가져오기 완료 (${mapped.length}개 일정)`, ok: true })
+      const errNote = errors && errors.length > 0 ? ` (캘린더 ${errors.length}개 실패)` : ''
+      actions.addSyncLog({
+        time: now.format('HH:mm'),
+        type: 'import',
+        msg: `가져오기 완료 (${mapped.length}개 일정)${errNote}`,
+        ok: !errors || errors.length === 0,
+      })
+      // 어떤 캘린더가 실패했는지 콘솔에 자세히 (디버그)
+      if (errors && errors.length > 0) {
+        console.warn('실패한 캘린더 상세:', errors)
+        errors.forEach(err => {
+          actions.addSyncLog({
+            time: dayjs().format('HH:mm'),
+            type: 'import',
+            msg: `실패: ${err.calendarId.slice(0, 30)}… → ${err.error}`,
+            ok: false,
+          })
+        })
+      }
     } catch (e) {
       const errMsg = e?.message || String(e)
       setSyncError(errMsg)
