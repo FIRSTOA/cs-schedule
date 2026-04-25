@@ -225,31 +225,57 @@ export default async function handler(req, res) {
 
     // ── 일정 이동 (출처 캘린더 → 대상 캘린더) ─────────────────────────────────
     // body: { fromCalendarId, toCalendarId, eventId, eventBody }
-    // 동작: 대상 캘린더에 새로 생성 → 성공하면 출처에서 삭제. 부분 실패 시 롤백 없이 양쪽 상태 보고.
+    // 1) events.move로 원자적 이동 (eventId 유지) — 같은 서비스 계정 캘린더 간 권장 방식
+    // 2) 이동 후 본문(제목/시간/메모/색상 등) 변경분을 update로 반영
+    // 실패 시 옛 방식(insert + delete)으로 fallback. insert+delete는 delete 실패 시
+    // 옛 캘린더에 잔존 이벤트가 남아 다음 import에 새 일정처럼 잡히는 문제가 있음.
     if (req.method === 'POST' && action === 'move') {
       const { fromCalendarId, toCalendarId, eventId, eventBody } = req.body || {}
       if (!fromCalendarId || !toCalendarId || !eventId || !eventBody) {
         return res.status(400).json({ error: 'fromCalendarId, toCalendarId, eventId, eventBody required' })
       }
-      // 1) 대상에 생성
-      const created = await calendar.events.insert({
-        calendarId: toCalendarId,
-        requestBody: eventBody,
-      })
-      // 2) 출처에서 삭제 (실패해도 created는 반환)
-      let deleted = true
-      let deleteError = null
       try {
-        await calendar.events.delete({ calendarId: fromCalendarId, eventId })
-      } catch (e) {
-        deleted = false
-        deleteError = e.message
+        const moved = await calendar.events.move({
+          calendarId: fromCalendarId,
+          eventId,
+          destination: toCalendarId,
+        })
+        const updated = await calendar.events.update({
+          calendarId: toCalendarId,
+          eventId: moved.data.id,
+          requestBody: eventBody,
+        })
+        return res.status(200).json({
+          event: { ...updated.data, _calendarId: toCalendarId },
+          deleted: true,
+          deleteError: null,
+        })
+      } catch (moveErr) {
+        try {
+          const created = await calendar.events.insert({
+            calendarId: toCalendarId,
+            requestBody: eventBody,
+          })
+          let deleted = true
+          let deleteError = null
+          try {
+            await calendar.events.delete({ calendarId: fromCalendarId, eventId })
+          } catch (e) {
+            deleted = false
+            deleteError = e.message
+          }
+          return res.status(200).json({
+            event: { ...created.data, _calendarId: toCalendarId },
+            deleted,
+            deleteError,
+            moveFallback: moveErr.message,
+          })
+        } catch (insertErr) {
+          return res.status(500).json({
+            error: `move 실패 + insert 실패: ${moveErr.message} / ${insertErr.message}`,
+          })
+        }
       }
-      return res.status(200).json({
-        event: { ...created.data, _calendarId: toCalendarId },
-        deleted,
-        deleteError,
-      })
     }
 
     return res.status(404).json({ error: 'Unknown action' })
