@@ -11,6 +11,8 @@ import {
   createEvent,
   updateEvent,
   googleEventToSchedule,
+  fetchAppConfig,
+  saveAppConfig,
 } from '@/lib/calendarApi'
 
 const AUTO_SYNC_INTERVAL = 30 * 1000 // 30초
@@ -63,13 +65,23 @@ function AppInner() {
   const initialLoadDone = useRef(false)
   // 동시 import 방지 락
   const importInFlight = useRef(false)
+  // 설정(멤버/팀라벨) 자동 push 디바운스 타이머
+  const configPushTimer = useRef(null)
+  // 마지막으로 push한 설정 시그니처 (불필요한 push 방지)
+  const lastPushedConfig = useRef(null)
+  // 원격 설정 적용 직후엔 push 트리거 안 함 (echo 방지)
+  const skipNextConfigPush = useRef(false)
 
   // ── 가져오기 핵심 로직 (silent: 로그 남기지 않음) ────────────────────────
   const doImport = useCallback(async ({ silent = false } = {}) => {
     if (importInFlight.current) return false
     importInFlight.current = true
     try {
-      const events = await fetchAllEvents()
+      // 일정 + 설정을 동시에 가져옴
+      const [events, remoteConfig] = await Promise.all([
+        fetchAllEvents(),
+        fetchAppConfig().catch(() => null),
+      ])
       let nextId = Math.max(...state.schedules.map(s => s.id || 0), 0) + 1
       const mapped = events.map(ev => {
         const s = googleEventToSchedule(ev)
@@ -77,6 +89,16 @@ function AppInner() {
         return s
       })
       actions.importFromGoogle(mapped)
+      // 원격 설정 적용 (있을 때만)
+      if (remoteConfig && (remoteConfig.members || remoteConfig.teamLabels)) {
+        skipNextConfigPush.current = true
+        actions.applyRemoteConfig(remoteConfig)
+        // 시그니처 갱신 → 동일 내용 재push 방지
+        lastPushedConfig.current = JSON.stringify({
+          members: remoteConfig.members || null,
+          teamLabels: remoteConfig.teamLabels || null,
+        })
+      }
       actions.setGoogleConnected(true)
       if (!silent) {
         const now = dayjs()
@@ -205,6 +227,49 @@ function AppInner() {
     }, 3000)
   }, [state.schedules]) // eslint-disable-line
 
+  // ── 멤버/팀라벨 변경 시 구글 캘린더에 자동 push (디바운스 1.5초) ─────────
+  useEffect(() => {
+    if (!initialLoadDone.current) return
+    // 원격에서 방금 적용된 직후라면 push 스킵
+    if (skipNextConfigPush.current) {
+      skipNextConfigPush.current = false
+      lastPushedConfig.current = JSON.stringify({
+        members: state.members,
+        teamLabels: state.teamLabels,
+      })
+      return
+    }
+    const sig = JSON.stringify({
+      members: state.members,
+      teamLabels: state.teamLabels,
+    })
+    if (sig === lastPushedConfig.current) return
+
+    if (configPushTimer.current) clearTimeout(configPushTimer.current)
+    configPushTimer.current = setTimeout(async () => {
+      try {
+        await saveAppConfig({
+          members: state.members,
+          teamLabels: state.teamLabels,
+        })
+        lastPushedConfig.current = sig
+        actions.addSyncLog({
+          time: dayjs().format('HH:mm'),
+          type: 'config',
+          msg: '팀원 설정 동기화 완료',
+          ok: true,
+        })
+      } catch (e) {
+        actions.addSyncLog({
+          time: dayjs().format('HH:mm'),
+          type: 'config',
+          msg: `설정 동기화 실패: ${e.message}`,
+          ok: false,
+        })
+      }
+    }, 1500)
+  }, [state.members, state.teamLabels]) // eslint-disable-line
+
   const pages = {
     today: <TodayPage />,
     calendar: <CalendarPage />,
@@ -228,7 +293,7 @@ function AppInner() {
       </div>
 
       {/* 하단 네비게이션 */}
-      <NavBar active={tab} onChange={setTab} />
+      <NavBar active={tab} onChange={setTab} syncConnected={state.googleConnected} />
     </div>
   )
 }

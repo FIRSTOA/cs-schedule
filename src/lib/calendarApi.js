@@ -56,6 +56,31 @@ export async function deleteEvent(eventId) {
   return true
 }
 
+// ── 앱 설정 가져오기 (모든 사용자 공유) ────────────────────────────────────
+export async function fetchAppConfig() {
+  const res = await fetch(`${BASE}?action=config`)
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    throw new Error(err.error || `HTTP ${res.status}`)
+  }
+  const data = await res.json()
+  return data.config // null이면 아직 설정 없음
+}
+
+// ── 앱 설정 저장 (모든 사용자 공유) ─────────────────────────────────────────
+export async function saveAppConfig(payload) {
+  const res = await fetch(`${BASE}?action=config`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    throw new Error(err.error || `HTTP ${res.status}`)
+  }
+  return await res.json()
+}
+
 // ── 팀별 고정 시간 ──────────────────────────────────────────────────────────
 const TEAM_TIME = {
   A: { start: '09:00', end: '09:30' },

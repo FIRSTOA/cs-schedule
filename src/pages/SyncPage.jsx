@@ -14,13 +14,13 @@ const AUTO_SYNC_INTERVAL = 30 * 1000 // 30초
 export default function SyncPage() {
   const { state, actions } = useStore()
   const [loading, setLoading] = useState(false)
-  const [lastSyncTime, setLastSyncTime] = useState(null)
   const [nextSyncIn, setNextSyncIn] = useState(null)
   const [syncError, setSyncError] = useState('')
   const countdownTimer = useRef(null)
 
   // 연결 상태는 store에서 읽기
   const connected = state.googleConnected
+  const lastSyncTime = state.lastSyncAt ? dayjs(state.lastSyncAt) : null
 
   // 카운트다운 표시 (수동 동기화 후 5분 카운트다운)
   const startCountdown = useCallback(() => {
@@ -39,10 +39,7 @@ export default function SyncPage() {
 
   useEffect(() => {
     // 이미 연결됐으면 카운트다운 시작
-    if (connected) {
-      setLastSyncTime(dayjs())
-      startCountdown()
-    }
+    if (connected) startCountdown()
     return () => {
       if (countdownTimer.current) clearInterval(countdownTimer.current)
     }
@@ -63,7 +60,6 @@ export default function SyncPage() {
       actions.importFromGoogle(mapped)
       actions.setGoogleConnected(true)
       const now = dayjs()
-      setLastSyncTime(now)
       startCountdown()
       actions.addSyncLog({ time: now.format('HH:mm'), type: 'import', msg: `가져오기 완료 (${mapped.length}개 일정)`, ok: true })
     } catch (e) {
