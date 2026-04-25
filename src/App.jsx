@@ -181,6 +181,7 @@ function AppInner() {
     if (targets.length === 0) return
     let successCount = 0
     let failCount = 0
+    const failReasons = []
     for (const s of targets) {
       try {
         const eventBody = buildEventBody(s)
@@ -231,17 +232,28 @@ function AppInner() {
         successCount++
       } catch (e) {
         console.error('자동 반영 실패:', s.title, e)
+        failReasons.push(`${s.title || '(제목없음)'}: ${e.message || e}`)
         failCount++
       }
     }
     if (successCount > 0 || failCount > 0) {
+      const baseMsg = successCount > 0
+        ? `자동 반영 완료 (${successCount}개${failCount > 0 ? `, 실패 ${failCount}개` : ''})`
+        : `자동 반영 실패 (${failCount}개)`
       actions.addSyncLog({
         time: dayjs().format('HH:mm'),
         type: 'export',
-        msg: successCount > 0
-          ? `자동 반영 완료 (${successCount}개${failCount > 0 ? `, 실패 ${failCount}개` : ''})`
-          : `자동 반영 실패 (${failCount}개)`,
+        msg: baseMsg,
         ok: failCount === 0,
+      })
+      // 실패 사유는 별도 로그로 — 동기화 기록에서 어디가 막히는지 바로 보이게.
+      failReasons.forEach(reason => {
+        actions.addSyncLog({
+          time: dayjs().format('HH:mm'),
+          type: 'export',
+          msg: `실패: ${reason}`,
+          ok: false,
+        })
       })
     }
   }, [actions, state.calendars])
